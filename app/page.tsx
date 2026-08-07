@@ -13,7 +13,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
   Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { Movimiento, ArqueoDiario, MetodoPago, CategoriaGasto } from '@/lib/supabase';
+import { Movimiento, ArqueoDiario, MetodoPago, CategoriaGasto, GastoFijo, SaldoApertura } from '@/lib/supabase';
 import { db, supabaseAuth } from '@/lib/api';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -26,7 +26,7 @@ const compactMoney = (v: number) =>
 const today = format(new Date(), 'yyyy-MM-dd');
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
-type View = 'dashboard' | 'day' | 'movements' | 'cartuchera' | 'controlmp' | 'controldebito' | 'pagos';
+type View = 'dashboard' | 'day' | 'movements' | 'cartuchera' | 'controlmp' | 'controldebito' | 'pagos' | 'config' | 'cierre';
 
 // ─── App principal ─────────────────────────────────────────────────────────────
 export default function Home() {
@@ -105,8 +105,17 @@ export default function Home() {
 
         <p className="mb-3 mt-9 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">Administración</p>
         <nav className="space-y-1">
-          <NavItem icon={<PiggyBank size={18} />} label="Cierre de mes" />
-          <NavItem icon={<Settings2 size={18} />} label="Configuración" />
+          <NavItem
+  active={view === 'cierre'}
+  icon={<PiggyBank size={18} />}
+  label="Cierre de mes"
+  onClick={() => { setView('cierre'); setMobileOpen(false); }}
+/>          <NavItem
+  active={view === 'config'}
+  icon={<Settings2 size={18} />}
+  label="Configuración"
+  onClick={() => { setView('config'); setMobileOpen(false); }}
+/>
         </nav>
 
         <div className="mt-auto rounded-2xl bg-[#eef3e8] p-4">
@@ -145,6 +154,8 @@ export default function Home() {
                   : view === 'cartuchera' ? 'Control de cartuchera'
                   : view === 'controlmp' ? 'Control MercadoPago'
                   : view === 'controldebito' ? 'Control Débito'
+                  : view === 'config' ? 'Configuración'
+                  : view === 'cierre' ? 'Cierre de mes'                  
                   : 'Pagos individuales'}
               </h1>
             </div>
@@ -166,6 +177,8 @@ export default function Home() {
           {view === 'controlmp' && <ControlMP />}
           {view === 'controldebito' && <ControlDebito />}
           {view === 'pagos' && <PagosIndividuales />}
+          {view === 'config' && <Configuracion />}
+          {view === 'cierre' && <CierreMes />}
         </section>
       </div>
 
@@ -198,18 +211,22 @@ function Dashboard() {
   const [arqueo, setArqueo] = useState<ArqueoDiario | null>(null);
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
+  const [gastosFijos, setGastosFijos] = useState<GastoFijo[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
-      const [movs, arq] = await Promise.all([
-        db.getMovimientosMes(inicio, fin),
-        db.getArqueoMes(inicio, fin),
-      ]);
-      setMovimientos(movs);
-      setArqueo(arq);
+      const [movs, arq, gf] = await Promise.all([
+  db.getMovimientosMes(inicio, fin),
+  db.getArqueoMes(inicio, fin),
+  db.getGastosFijos(inicio),
+]);
+
+setMovimientos(movs);
+setArqueo(arq);
+setGastosFijos(gf);
       setLoading(false);
     };
     fetchData();
@@ -223,24 +240,34 @@ function Dashboard() {
   const saldoMP = movimientos.filter(m => m.metodo === 'MercadoPago').reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
   const saldoTotal = saldoEfectivo + saldoDebito + saldoMP;
 
-  const ventasPorDia = useMemo(() => {
+    const ventasPorDia = useMemo(() => {
     const mapa: Record<string, number> = {};
     movimientos.filter(m => m.entrada > 0).forEach(m => {
       mapa[m.fecha] = (mapa[m.fecha] || 0) + Number(m.entrada);
     });
     return Object.entries(mapa).map(([fecha, value]) => ({
-      day: format(parseISO(fecha), 'd'), value,
+      day: format(parseISO(fecha), 'd'),
+      value,
     }));
   }, [movimientos]);
 
   const diasAbiertos = ventasPorDia.filter(d => d.value > 0).length;
   const promedioDiario = diasAbiertos > 0 ? Math.round(totalEntradas / diasAbiertos) : 0;
 
+  const totalGastosFijos = gastosFijos.reduce((s, g) => s + Number(g.monto), 0);
+  const metaDiaria = totalGastosFijos > 0 ? Math.round(totalGastosFijos / 24) : 0;
+  const brechaVsMeta = promedioDiario - metaDiaria;
+
+  const estadoMeta =
+    brechaVsMeta >= 0 ? 'ok'
+    : Math.abs(brechaVsMeta) <= 1000 ? 'warn'
+    : 'error';
+
   const gastosPorCategoria = useMemo(() => {
     const colores: Record<string, string> = {
       'MATERIA PRIMA': '#758b5b', 'PERSONAL': '#c6a15b',
       'OPERATIVO': '#9aa88d', 'DESECHABLES': '#d9c8a4',
-      'AHORRO': '#4c6651', 'GISELA': '#a07b9c', 'EXTRAORDINARIO': '#c47b5b',
+      'AHORRO': '#4c6651', 'GISELA': '#6b5769', 'EXTRAORDINARIO': '#c47b5b',
     };
     const mapa: Record<string, number> = {};
     movimientos.filter(m => m.salida > 0 && m.categoria).forEach(m => {
@@ -291,6 +318,35 @@ function Dashboard() {
         <StatCard label="MercadoPago" value={money(saldoMP)} icon={<Cloud size={18} />} accent="lilac" />
         <StatCard label="Resultado del mes" value={money(resultado)} icon={<TrendingUp size={18} />} accent="green" />
       </div>
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+  <StatCard
+    label="Gastos fijos del mes"
+    value={money(totalGastosFijos)}
+    icon={<PiggyBank size={18} />}
+    accent="sand"
+  />
+  <StatCard
+    label="Meta diaria"
+    value={money(metaDiaria)}
+    icon={<CalendarDays size={18} />}
+    accent="blue"
+  />
+  <StatCard
+    label="Brecha vs meta"
+    value={`${brechaVsMeta > 0 ? '+' : brechaVsMeta < 0 ? '-' : ''}${money(Math.abs(brechaVsMeta))}`}
+    icon={<Sparkles size={18} />}
+    accent={brechaVsMeta >= 0 ? 'green' : 'sand'}
+  />
+</div>
+
+<div className="mt-4">
+  <ControlBadge
+    label="Estado meta diaria"
+    dif={brechaVsMeta}
+    status={estadoMeta}
+  />
+</div>
 
       {arqueo && (
         <div className="mt-5 grid gap-4 sm:grid-cols-3">
@@ -1171,6 +1227,407 @@ function PagosIndividuales() {
     </div>
   );
 }
+
+// ─── Configuracion ─────────────────────────────────────────────────────────────────
+function Configuracion() {
+  const [mes, setMes] = useState(mesActual);
+  const [concepto, setConcepto] = useState('');
+  const [monto, setMonto] = useState('');
+  const [items, setItems] = useState<GastoFijo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
+
+  const fetchGastos = async () => {
+    setLoading(true);
+    const data = await db.getGastosFijos(mes);
+    setItems(data);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchGastos();
+    setSaved(false);
+  }, [mes]);
+
+  const totalGastosFijos = items.reduce((s, g) => s + Number(g.monto), 0);
+  const metaDiaria = totalGastosFijos > 0 ? Math.round(totalGastosFijos / 24) : 0;
+
+  const handleGuardar = async () => {
+    if (!concepto.trim() || n(monto) <= 0) return;
+
+    setSaving(true);
+
+    await db.insertGastoFijo({
+      periodo: mes,
+      concepto: concepto.trim(),
+      monto: n(monto),
+    });
+
+    setConcepto('');
+    setMonto('');
+    setSaving(false);
+    setSaved(true);
+    fetchGastos();
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleDelete = async (id: string) => {
+    await db.deleteGastoFijo(id);
+    fetchGastos();
+  };
+
+  return (
+    <div className="animate-in fade-in duration-500">
+      <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
+            <Settings2 size={14} /> Parámetros del negocio
+          </div>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
+            Gastos fijos mensuales
+          </h2>
+          <p className="mt-2 text-sm text-[#849083]">
+            Definí los costos fijos del mes para calcular la meta diaria.
+          </p>
+        </div>
+
+        <select
+          value={mes}
+          onChange={e => setMes(e.target.value)}
+          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+        >
+          {Array.from({ length: 12 }, (_, i) => {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const val = format(startOfMonth(d), 'yyyy-MM-dd');
+            return (
+              <option key={val} value={val}>
+                {format(d, 'MMMM yyyy', { locale: es })}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-5 text-sm font-bold">Nuevo gasto fijo</p>
+
+          <div className="mb-4">
+            <label className="mb-2 block text-[11px] font-semibold text-[#788778]">
+              Concepto
+            </label>
+            <input
+              value={concepto}
+              onChange={e => setConcepto(e.target.value)}
+              placeholder="Ej: Alquiler / Luz / ABL / Internet"
+              className="h-12 w-full rounded-xl border border-[#e2e8df] bg-[#fbfcfa] px-3 text-sm outline-none focus:border-[#9ab498]"
+            />
+          </div>
+
+          <AmountField label="Monto mensual" value={monto} setValue={setMonto} />
+
+          <button
+            onClick={handleGuardar}
+            disabled={saving || !concepto.trim() || n(monto) <= 0}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#40562a] py-3 text-sm font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
+          >
+            {saving ? 'Guardando...' : 'Agregar gasto fijo'}
+            <CirclePlus size={16} />
+          </button>
+
+          {saved && (
+            <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-4 py-3 text-sm font-semibold text-[#3d6942]">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#bdd8b8]">✓</div>
+              Gasto fijo registrado
+            </div>
+          )}
+
+          <div className="mt-6 rounded-2xl bg-[#eef3e8] p-4">
+            <p className="text-[11px] font-semibold text-[#6a7d62]">Resumen del mes</p>
+            <div className="mt-3 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-[#6f7f6d]">Total gastos fijos</span>
+                <span className="font-bold text-[#243126]">{money(totalGastosFijos)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#6f7f6d]">Meta diaria (24 días)</span>
+                <span className="font-bold text-[#40562a]">{money(metaDiaria)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-5 text-sm font-bold">
+            Gastos fijos de {format(parseISO(mes), 'MMMM yyyy', { locale: es })}
+          </p>
+
+          {loading ? (
+            <div className="flex h-40 items-center justify-center text-sm text-[#849083]">
+              Cargando...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-sm text-[#849083]">
+              No hay gastos fijos cargados para este mes
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {items.map(item => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between rounded-xl border border-[#edf0eb] p-3"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-[#3c4e3e]">{item.concepto}</p>
+                    <p className="text-[11px] text-[#99a398]">Gasto fijo mensual</p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold text-[#ba7665]">
+                      {money(Number(item.monto))}
+                    </span>
+                    <button
+                      onClick={() => handleDelete(item.id!)}
+                      className="text-[#b5beb4] hover:text-[#ba4a3a]"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <div className="mt-4 rounded-xl bg-[#fbfcfa] px-4 py-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-[#6f7f6d]">Total</span>
+                  <span className="font-bold text-[#243126]">{money(totalGastosFijos)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CierreMes() {
+  const [mes, setMes] = useState(mesActual);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [yaExiste, setYaExiste] = useState(false);
+
+  const [saldoEfectivo, setSaldoEfectivo] = useState(0);
+  const [saldoDebito, setSaldoDebito] = useState(0);
+  const [saldoMP, setSaldoMP] = useState(0);
+  const [totalEntradas, setTotalEntradas] = useState(0);
+  const [totalSalidas, setTotalSalidas] = useState(0);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setSaved(false);
+
+      const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+      const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+
+      const movs = await db.getMovimientosMes(inicio, fin);
+
+      const efec = movs
+        .filter(m => m.metodo === 'Efectivo')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      const deb = movs
+        .filter(m => m.metodo === 'Debito')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      const mp = movs
+        .filter(m => m.metodo === 'MercadoPago')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      setSaldoEfectivo(efec);
+      setSaldoDebito(deb);
+      setSaldoMP(mp);
+      setTotalEntradas(movs.reduce((s, m) => s + Number(m.entrada), 0));
+      setTotalSalidas(movs.reduce((s, m) => s + Number(m.salida), 0));
+
+      const fechaBase = parseISO(mes);
+      const mesSiguiente = format(
+        startOfMonth(new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1)),
+        'yyyy-MM-dd'
+      );
+
+      const existente = await db.getSaldoApertura(mesSiguiente);
+      setYaExiste(!!existente);
+
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [mes]);
+
+  const resultado = totalEntradas - totalSalidas;
+  const saldoTotal = saldoEfectivo + saldoDebito + saldoMP;
+
+  const handleCerrar = async () => {
+    setSaving(true);
+
+    const fechaBase = parseISO(mes);
+    const mesSiguiente = format(
+      startOfMonth(new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1)),
+      'yyyy-MM-dd'
+    );
+
+    await db.upsertSaldoApertura({
+      periodo: mesSiguiente,
+      efectivo: saldoEfectivo,
+      debito: saldoDebito,
+      mercadopago: saldoMP,
+    });
+
+    setSaving(false);
+    setSaved(true);
+    setYaExiste(true);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center text-[#849083]">
+        Cargando...
+      </div>
+    );
+  }
+
+  const fechaBase = parseISO(mes);
+  const mesNombre = format(fechaBase, 'MMMM yyyy', { locale: es });
+  const mesSigDate = new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1);
+  const mesSigNombre = format(mesSigDate, 'MMMM yyyy', { locale: es });
+
+  return (
+    <div className="animate-in fade-in duration-500">
+      <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
+            <PiggyBank size={14} /> Cierre mensual
+          </div>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
+            Cierre de mes
+          </h2>
+          <p className="mt-2 text-sm text-[#849083]">
+            Revisá los saldos finales y trasladalos como apertura del mes siguiente.
+          </p>
+        </div>
+
+        <select
+          value={mes}
+          onChange={e => setMes(e.target.value)}
+          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+        >
+          {Array.from({ length: 12 }, (_, i) => {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const val = format(startOfMonth(d), 'yyyy-MM-dd');
+            return (
+              <option key={val} value={val}>
+                {format(d, 'MMMM yyyy', { locale: es })}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      <div className="max-w-xl space-y-5">
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-4 text-sm font-bold">Resumen de {mesNombre}</p>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl bg-[#e5f1e2] px-4 py-3">
+              <span className="text-xs font-medium text-[#3d6942]">Total entradas</span>
+              <span className="text-sm font-bold text-[#3d6942]">{money(totalEntradas)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-[#f9ebe6] px-4 py-3">
+              <span className="text-xs font-medium text-[#ba7665]">Total salidas</span>
+              <span className="text-sm font-bold text-[#ba7665]">{money(totalSalidas)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
+              <span className="text-xs font-medium text-[#40562a]">Resultado</span>
+              <span className="text-lg font-bold text-[#40562a]">{money(resultado)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-4 text-sm font-bold">Saldos finales</p>
+          <p className="mb-3 text-[11px] text-[#99a398]">
+            Estos saldos se trasladarán como apertura de {mesSigNombre}
+          </p>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
+              <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
+                <Receipt size={14} /> Efectivo
+              </span>
+              <span className="text-sm font-bold">{money(saldoEfectivo)}</span>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
+              <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
+                <CreditCardIcon /> Débito
+              </span>
+              <span className="text-sm font-bold">{money(saldoDebito)}</span>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
+              <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
+                <Cloud size={14} /> MercadoPago
+              </span>
+              <span className="text-sm font-bold">{money(saldoMP)}</span>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl bg-[#40562a] px-4 py-3 text-white">
+              <span className="text-xs font-medium">Saldo total</span>
+              <span className="text-lg font-bold">{money(saldoTotal)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          {yaExiste && !saved && (
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-[#e8c96e] bg-[#fef9e7] px-4 py-3">
+              <span className="text-xs font-bold text-[#926c00]">
+                ⚠️ Ya existe una apertura cargada para {mesSigNombre}
+              </span>
+            </div>
+          )}
+
+          {saved ? (
+            <div className="flex items-center gap-2 rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-4 py-3 text-sm font-semibold text-[#3d6942]">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#bdd8b8]">✓</div>
+              Cierre registrado — Apertura de {mesSigNombre} guardada
+            </div>
+          ) : (
+            <button
+              onClick={handleCerrar}
+              disabled={saving}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#40562a] py-3 text-sm font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
+            >
+              {saving
+                ? 'Cerrando...'
+                : yaExiste
+                  ? `Actualizar apertura de ${mesSigNombre}`
+                  : `Cerrar ${mesNombre} y abrir ${mesSigNombre}`}
+              <PiggyBank size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ─── Movements ─────────────────────────────────────────────────────────────────
 function Movements() {

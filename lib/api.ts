@@ -1,7 +1,12 @@
 // lib/api.ts
 import { createClient } from '@supabase/supabase-js';
-import type { Movimiento, ArqueoDiario, MetodoPago } from '@/lib/supabase';
-
+import type {
+  Movimiento,
+  ArqueoDiario,
+  MetodoPago,
+  GastoFijo,
+  SaldoApertura,
+} from '@/lib/supabase';
 // ─── Cliente Supabase Auth (SOLO para autenticación, no para queries) ─────────
 // Usa la anon key porque solo la necesitamos para obtener el JWT del usuario
 // Esta clave con RLS activado no da acceso a los datos
@@ -84,6 +89,18 @@ export const db = {
     return data ?? [];
   },
 
+    getSaldoApertura: async (periodo: string): Promise<SaldoApertura | null> => {
+    const { data } = await dbRequest<{ data: SaldoApertura | null }>(
+      'getSaldoApertura',
+      { periodo }
+    );
+    return data ?? null;
+  },
+
+  upsertSaldoApertura: async (row: SaldoApertura): Promise<void> => {
+    await dbRequest('upsertSaldoApertura', row as unknown as Record<string, unknown>);
+  },
+
   deleteMovimientosDia: async (fecha: string): Promise<void> => {
     await dbRequest('deleteMovimientosDia', { fecha });
   },
@@ -98,6 +115,28 @@ export const db = {
 
   upsertArqueo: async (arqueo: Partial<ArqueoDiario> & { fecha: string }): Promise<void> => {
     await dbRequest('upsertArqueo', arqueo as Record<string, unknown>);
+  },
+
+    getGastosFijos: async (periodo: string): Promise<GastoFijo[]> => {
+    const { data } = await dbRequest<{ data: GastoFijo[] }>(
+      'getGastosFijos',
+      { periodo }
+    );
+    return data ?? [];
+  },
+
+  insertGastoFijo: async (
+    row: Omit<GastoFijo, 'id'>
+  ): Promise<GastoFijo | null> => {
+    const { data } = await dbRequest<{ data: GastoFijo[] }>(
+      'insertGastoFijo',
+      row as Record<string, unknown>
+    );
+    return data?.[0] ?? null;
+  },
+
+  deleteGastoFijo: async (id: string): Promise<void> => {
+    await dbRequest('deleteGastoFijo', { id });
   },
 
   deleteMovimiento: async (id: string): Promise<void> => {

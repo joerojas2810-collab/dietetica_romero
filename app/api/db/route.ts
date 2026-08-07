@@ -74,6 +74,12 @@ interface ArqueoUpsert {
   observaciones?: string | null;
 }
 
+interface GastoFijoInsert {
+  periodo: string;
+  concepto: string;
+  monto: number;
+}
+
 export async function POST(req: NextRequest) {
   const esValido = await autenticar(req);
 
@@ -275,6 +281,106 @@ export async function POST(req: NextRequest) {
 
         if (error) throw error;
         return NextResponse.json({ ok: true });
+      }
+
+              case 'getGastosFijos': {
+        const { periodo } = (payload ?? {}) as { periodo: string };
+
+        if (!periodo) {
+          return NextResponse.json(
+            { error: 'Falta periodo' },
+            { status: 400 }
+          );
+        }
+
+        const { data, error } = await supabase
+          .from('gastos_fijos')
+          .select('*')
+          .eq('periodo', periodo)
+          .order('concepto', { ascending: true });
+
+        if (error) throw error;
+        return NextResponse.json({ data });
+      }
+
+      case 'insertGastoFijo': {
+        const row = (payload ?? null) as GastoFijoInsert | null;
+
+        if (!row?.periodo || !row?.concepto || !row?.monto) {
+          return NextResponse.json(
+            { error: 'Payload inválido para gasto fijo' },
+            { status: 400 }
+          );
+        }
+
+        const { data, error } = await supabase
+          .from('gastos_fijos')
+          .insert({
+            periodo: row.periodo,
+            concepto: row.concepto,
+            monto: row.monto,
+          })
+          .select();
+
+        if (error) throw error;
+        return NextResponse.json({ data });
+      }
+
+      case 'deleteGastoFijo': {
+        const { id } = (payload ?? {}) as { id: string };
+
+        if (!id) {
+          return NextResponse.json(
+            { error: 'Falta id' },
+            { status: 400 }
+          );
+        }
+
+        const { error } = await supabase
+          .from('gastos_fijos')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        return NextResponse.json({ ok: true });
+      }
+
+            case 'getSaldoApertura': {
+        const { periodo } = (payload ?? {}) as { periodo: string };
+
+        if (!periodo) {
+          return NextResponse.json({ error: 'Falta periodo' }, { status: 400 });
+        }
+
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .select('*')
+          .eq('periodo', periodo)
+          .limit(1);
+
+        if (error) throw error;
+        return NextResponse.json({ data: data?.[0] ?? null });
+      }
+
+      case 'upsertSaldoApertura': {
+        const row = (payload ?? null) as {
+          periodo: string;
+          efectivo: number;
+          debito: number;
+          mercadopago: number;
+        } | null;
+
+        if (!row?.periodo) {
+          return NextResponse.json({ error: 'Falta periodo' }, { status: 400 });
+        }
+
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .upsert(row, { onConflict: 'periodo' })
+          .select();
+
+        if (error) throw error;
+        return NextResponse.json({ data });
       }
 
       default:
