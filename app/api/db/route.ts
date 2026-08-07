@@ -1,45 +1,56 @@
-// app/api/db/route.ts
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-// ─── Cliente servidor con service_role (nunca sale del servidor) ──────────────
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
+  process.env.SUPABASE_SERVICE_KEY!,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
 );
 
-// ─── Cliente para verificar tokens de usuarios ────────────────────────────────
-// Necesitamos un cliente separado para validar JWTs sin privilegios elevados
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
+  process.env.SUPABASE_SERVICE_KEY!,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
 );
 
-// ─── Autenticación: valida que el JWT sea real y vigente ──────────────────────
 async function autenticar(req: NextRequest): Promise<boolean> {
-  // Capa 1: secreto estático (evita requests externos sin token)
   const apiSecret = req.headers.get('x-api-secret');
   if (apiSecret !== process.env.API_SECRET) return false;
 
-  // Capa 2: JWT de Supabase Auth (verifica que hay un usuario real logueado)
-  const authHeader = req.headers.get('Authorization');
+  const authHeader = req.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) return false;
 
   const token = authHeader.replace('Bearer ', '');
 
-  // getUser valida el JWT contra Supabase — si expiró o es falso, falla
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+  const {
+    data: { user },
+    error,
+  } = await supabaseAdmin.auth.getUser(token);
 
   if (error || !user) return false;
 
   return true;
 }
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
 type MetodoPago = 'Efectivo' | 'Debito' | 'MercadoPago';
 type CategoriaGasto =
-  | 'PERSONAL' | 'OPERATIVO' | 'MATERIA PRIMA'
-  | 'DESECHABLES' | 'EXTRAORDINARIO' | 'GISELA' | 'AHORRO';
+  | 'PERSONAL'
+  | 'OPERATIVO'
+  | 'MATERIA PRIMA'
+  | 'DESECHABLES'
+  | 'EXTRAORDINARIO'
+  | 'GISELA'
+  | 'AHORRO';
 
 interface MovimientoInsert {
   fecha: string;
@@ -63,54 +74,91 @@ interface ArqueoUpsert {
   observaciones?: string | null;
 }
 
-// ─── Handler principal ────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // 1. Doble verificación: secreto + JWT
   const esValido = await autenticar(req);
+
   if (!esValido) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
   }
 
-  // 2. Parsear body
-  let body: { action: string; payload?: Record<string, unknown> };
+  let body: { action?: unknown; payload?: unknown };
+
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Body inválido' }, { status: 400 });
   }
 
-  const { action, payload = {} } = body;
+  if (typeof body.action !== 'string') {
+    return NextResponse.json({ error: 'Action inválida' }, { status: 400 });
+  }
 
-  // 3. Ejecutar action
+  const action = body.action;
+  const payload = body.payload;
+
   try {
     switch (action) {
-
       case 'getMovimientosMes': {
-        const { inicio, fin } = payload as { inicio: string; fin: string };
+        const { inicio, fin } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+        };
+
+        if (!inicio || !fin) {
+          return NextResponse.json(
+            { error: 'Faltan inicio o fin' },
+            { status: 400 }
+          );
+        }
+
         const { data, error } = await supabase
           .from('movimientos')
           .select('*')
           .gte('fecha', inicio)
           .lte('fecha', fin)
           .order('fecha', { ascending: true });
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'getMovimientosMesDesc': {
-        const { inicio, fin } = payload as { inicio: string; fin: string };
+        const { inicio, fin } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+        };
+
+        if (!inicio || !fin) {
+          return NextResponse.json(
+            { error: 'Faltan inicio o fin' },
+            { status: 400 }
+          );
+        }
+
         const { data, error } = await supabase
           .from('movimientos')
           .select('*')
           .gte('fecha', inicio)
           .lte('fecha', fin)
           .order('fecha', { ascending: false });
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'getArqueoMes': {
-        const { inicio, fin } = payload as { inicio: string; fin: string };
+        const { inicio, fin } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+        };
+
+        if (!inicio || !fin) {
+          return NextResponse.json(
+            { error: 'Faltan inicio o fin' },
+            { status: 400 }
+          );
+        }
+
         const { data, error } = await supabase
           .from('arqueo_diario')
           .select('*')
@@ -118,6 +166,7 @@ export async function POST(req: NextRequest) {
           .lte('fecha', fin)
           .order('fecha', { ascending: false })
           .limit(1);
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
@@ -126,61 +175,104 @@ export async function POST(req: NextRequest) {
         const { data, error } = await supabase
           .from('arqueo_diario')
           .select('a_caja_fuerte');
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'getMovimientosDia': {
-        const { fecha, metodo } = payload as { fecha: string; metodo?: MetodoPago };
-        let query = supabase
-          .from('movimientos')
-          .select('*')
-          .eq('fecha', fecha);
-        if (metodo) query = query.eq('metodo', metodo);
-        const { data, error } = await query.order('created_at', { ascending: false });
+        const { fecha, metodo } = (payload ?? {}) as {
+          fecha: string;
+          metodo?: MetodoPago;
+        };
+
+        if (!fecha) {
+          return NextResponse.json(
+            { error: 'Falta fecha' },
+            { status: 400 }
+          );
+        }
+
+        let query = supabase.from('movimientos').select('*').eq('fecha', fecha);
+
+        if (metodo) {
+          query = query.eq('metodo', metodo);
+        }
+
+        const { data, error } = await query.order('created_at', {
+          ascending: false,
+        });
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'deleteMovimientosDia': {
-        const { fecha } = payload as { fecha: string };
+        const { fecha } = (payload ?? {}) as { fecha: string };
+
+        if (!fecha) {
+          return NextResponse.json(
+            { error: 'Falta fecha' },
+            { status: 400 }
+          );
+        }
+
         const { error } = await supabase
           .from('movimientos')
           .delete()
           .eq('fecha', fecha);
+
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }
 
       case 'insertMovimientos': {
-        const { rows } = payload as { rows: MovimientoInsert[] };
+        const { rows } = (payload ?? {}) as { rows: MovimientoInsert[] };
+
         if (!rows || rows.length === 0) {
           return NextResponse.json({ ok: true, data: [] });
         }
+
         const { data, error } = await supabase
           .from('movimientos')
           .insert(rows)
           .select();
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'upsertArqueo': {
-        const arqueo = payload as ArqueoUpsert;
+        const arqueo = (payload ?? null) as ArqueoUpsert | null;
+
+        if (!arqueo?.fecha || typeof arqueo.fecha !== 'string') {
+          return NextResponse.json(
+            { error: 'Payload inválido: falta fecha en arqueo' },
+            { status: 400 }
+          );
+        }
+
         const { data, error } = await supabase
           .from('arqueo_diario')
           .upsert(arqueo, { onConflict: 'fecha' })
           .select();
+
         if (error) throw error;
         return NextResponse.json({ data });
       }
 
       case 'deleteMovimiento': {
-        const { id } = payload as { id: string };
+        const { id } = (payload ?? {}) as { id: string };
+
+        if (!id) {
+          return NextResponse.json({ error: 'Falta id' }, { status: 400 });
+        }
+
         const { error } = await supabase
           .from('movimientos')
           .delete()
           .eq('id', id);
+
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }
@@ -193,6 +285,9 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error(`[api/db] Error en action "${action}":`, err);
-    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Error interno del servidor' },
+      { status: 500 }
+    );
   }
 }
