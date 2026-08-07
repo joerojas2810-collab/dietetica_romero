@@ -1,9 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabase = createClient(supabaseUrl, supabaseKey);
+// lib/supabase.ts
+// ATENCIÓN: el cliente de Supabase fue eliminado del frontend.
+// Ahora solo exportamos los tipos TypeScript.
+// Las queries van por /api/db (ver lib/api.ts)
 
 export type MetodoPago = 'Efectivo' | 'Debito' | 'MercadoPago';
 
