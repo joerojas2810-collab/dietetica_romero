@@ -26,7 +26,17 @@ const compactMoney = (v: number) =>
 const today = format(new Date(), 'yyyy-MM-dd');
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
-type View = 'dashboard' | 'day' | 'movements' | 'cartuchera' | 'controlmp' | 'controldebito' | 'pagos' | 'config' | 'cierre';
+type View =
+  | 'dashboard'
+  | 'day'
+  | 'movements'
+  | 'cartuchera'
+  | 'controlmp'
+  | 'controldebito'
+  | 'pagos'
+  | 'config'
+  | 'cierre'
+  | 'reportes';
 
 // ─── App principal ─────────────────────────────────────────────────────────────
 export default function Home() {
@@ -105,17 +115,9 @@ export default function Home() {
 
         <p className="mb-3 mt-9 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">Administración</p>
         <nav className="space-y-1">
-          <NavItem
-  active={view === 'cierre'}
-  icon={<PiggyBank size={18} />}
-  label="Cierre de mes"
-  onClick={() => { setView('cierre'); setMobileOpen(false); }}
-/>          <NavItem
-  active={view === 'config'}
-  icon={<Settings2 size={18} />}
-  label="Configuración"
-  onClick={() => { setView('config'); setMobileOpen(false); }}
-/>
+        <NavItem active={view === 'cierre'} icon={<PiggyBank size={18} />} label="Cierre de mes" onClick={() => { setView('cierre'); setMobileOpen(false); }}/>        
+        <NavItem active={view === 'config'} icon={<Settings2 size={18} />} label="Configuración" onClick={() => { setView('config'); setMobileOpen(false); }}/>
+        <NavItem active={view === 'reportes'} icon={<BarChart3 size={18} />} label="Reportes" onClick={() => { setView('reportes'); setMobileOpen(false); }} />
         </nav>
 
         <div className="mt-auto rounded-2xl bg-[#eef3e8] p-4">
@@ -155,7 +157,8 @@ export default function Home() {
                   : view === 'controlmp' ? 'Control MercadoPago'
                   : view === 'controldebito' ? 'Control Débito'
                   : view === 'config' ? 'Configuración'
-                  : view === 'cierre' ? 'Cierre de mes'                  
+                  : view === 'cierre' ? 'Cierre de mes'    
+                  : view === 'reportes' ? 'Reportes'              
                   : 'Pagos individuales'}
               </h1>
             </div>
@@ -179,6 +182,7 @@ export default function Home() {
           {view === 'pagos' && <PagosIndividuales />}
           {view === 'config' && <Configuracion />}
           {view === 'cierre' && <CierreMes />}
+          {view === 'reportes' && <Reportes />}
         </section>
       </div>
 
@@ -1628,6 +1632,208 @@ function CierreMes() {
   );
 }
 
+function Reportes() {
+  const [mes, setMes] = useState(mesActual);
+  const [loading, setLoading] = useState(true);
+  const [aperturas, setAperturas] = useState<SaldoApertura[]>([]);
+  const [desvios, setDesvios] = useState<{
+    fecha: string;
+    difEfectivo: number | null;
+    difDebito: number | null;
+    difMP: number | null;
+    observaciones?: string | null;
+  }[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+
+      const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+      const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+
+      const [saldos, movs, arqueos] = await Promise.all([
+        db.getSaldosApertura(),
+        db.getMovimientosMes(inicio, fin),
+        db.getArqueosMes(inicio, fin),
+      ]);
+
+      setAperturas(saldos);
+
+      // saldos por día y método (solo del mes)
+      const porDia: Record<string, { ef: number; db: number; mp: number }> = {};
+      movs.forEach(m => {
+        if (!porDia[m.fecha]) porDia[m.fecha] = { ef: 0, db: 0, mp: 0 };
+        const delta = Number(m.entrada) - Number(m.salida);
+        if (m.metodo === 'Efectivo') porDia[m.fecha].ef += delta;
+        if (m.metodo === 'Debito') porDia[m.fecha].db += delta;
+        if (m.metodo === 'MercadoPago') porDia[m.fecha].mp += delta;
+      });
+
+      const lista = arqueos.map(a => {
+        const s = porDia[a.fecha] || { ef: 0, db: 0, mp: 0 };
+        return {
+          fecha: a.fecha,
+          difEfectivo: a.total_contado != null ? Number(a.total_contado) - s.ef : null,
+          difDebito: a.disponible_debito != null ? Number(a.disponible_debito) - s.db : null,
+          difMP: a.disponible_mp != null ? Number(a.disponible_mp) - s.mp : null,
+          observaciones: a.observaciones,
+        };
+      });
+
+      // solo días con algún desvío
+      setDesvios(
+        lista.filter(d =>
+          (d.difEfectivo != null && d.difEfectivo !== 0) ||
+          (d.difDebito != null && d.difDebito !== 0) ||
+          (d.difMP != null && d.difMP !== 0)
+        )
+      );
+
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [mes]);
+
+  const semaforo = (dif: number | null) => {
+    if (dif === null) return 'sin-dato';
+    if (dif === 0) return 'ok';
+    if (Math.abs(dif) <= 1000) return 'warn';
+    return 'error';
+  };
+
+  if (loading) {
+    return <div className="flex h-64 items-center justify-center text-[#849083]">Cargando...</div>;
+  }
+
+  return (
+    <div className="animate-in fade-in duration-500">
+      <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
+            <BarChart3 size={14} /> Historial y controles
+          </div>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
+            Reportes
+          </h2>
+          <p className="mt-2 text-sm text-[#849083]">
+            Aperturas de mes y desvíos de efectivo, débito y MercadoPago.
+          </p>
+        </div>
+
+        <select
+          value={mes}
+          onChange={e => setMes(e.target.value)}
+          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+        >
+          {Array.from({ length: 12 }, (_, i) => {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            const val = format(startOfMonth(d), 'yyyy-MM-dd');
+            return (
+              <option key={val} value={val}>
+                {format(d, 'MMMM yyyy', { locale: es })}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        {/* Aperturas / cierres */}
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-1 text-sm font-bold">Aperturas de mes</p>
+          <p className="mb-5 text-xs text-[#99a398]">
+            Cada fila es el saldo de apertura (cierre del mes anterior).
+          </p>
+
+          {aperturas.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-sm text-[#849083]">
+              Sin aperturas registradas
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {aperturas.map(a => (
+                <div key={a.periodo} className="rounded-xl border border-[#edf0eb] p-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-bold text-[#3c4e3e]">
+                      {format(parseISO(a.periodo), 'MMMM yyyy', { locale: es })}
+                    </p>
+                    <span className="text-sm font-bold text-[#40562a]">
+                      {money(Number(a.efectivo) + Number(a.debito) + Number(a.mercadopago))}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[11px]">
+                    <div className="rounded-lg bg-[#f5f5ec] px-2 py-2">
+                      <p className="text-[#849083]">Efectivo</p>
+                      <p className="font-semibold">{money(Number(a.efectivo))}</p>
+                    </div>
+                    <div className="rounded-lg bg-[#f5f5ec] px-2 py-2">
+                      <p className="text-[#849083]">Débito</p>
+                      <p className="font-semibold">{money(Number(a.debito))}</p>
+                    </div>
+                    <div className="rounded-lg bg-[#f5f5ec] px-2 py-2">
+                      <p className="text-[#849083]">MP</p>
+                      <p className="font-semibold">{money(Number(a.mercadopago))}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Desvíos del mes */}
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-1 text-sm font-bold">Desvíos del mes</p>
+          <p className="mb-5 text-xs text-[#99a398]">
+            Días con diferencia ≠ 0 en efectivo, débito o MP.
+          </p>
+
+          {desvios.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-sm text-[#849083]">
+              Sin desvíos en este mes
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {desvios.map(d => (
+                <div key={d.fecha} className="rounded-xl border border-[#edf0eb] p-4">
+                  <p className="mb-3 text-xs font-bold text-[#3c4e3e]">
+                    {format(parseISO(d.fecha), "d 'de' MMMM", { locale: es })}
+                  </p>
+
+                  <div className="space-y-2">
+                    <ControlBadge
+                      label="Efectivo"
+                      dif={d.difEfectivo}
+                      status={semaforo(d.difEfectivo)}
+                    />
+                    <ControlBadge
+                      label="Débito"
+                      dif={d.difDebito}
+                      status={semaforo(d.difDebito)}
+                    />
+                    <ControlBadge
+                      label="MercadoPago"
+                      dif={d.difMP}
+                      status={semaforo(d.difMP)}
+                    />
+                  </div>
+
+                  {d.observaciones && (
+                    <p className="mt-3 text-[11px] text-[#849083]">
+                      Obs: {d.observaciones}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Movements ─────────────────────────────────────────────────────────────────
 function Movements() {

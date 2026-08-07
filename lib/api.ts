@@ -97,6 +97,21 @@ export const db = {
     return data ?? null;
   },
 
+    getSaldosApertura: async (): Promise<SaldoApertura[]> => {
+    const { data } = await dbRequest<{ data: SaldoApertura[] }>(
+      'getSaldosApertura'
+    );
+    return data ?? [];
+  },
+
+  getArqueosMes: async (inicio: string, fin: string): Promise<ArqueoDiario[]> => {
+    const { data } = await dbRequest<{ data: ArqueoDiario[] }>(
+      'getArqueosMes',
+      { inicio, fin }
+    );
+    return data ?? [];
+  },
+
   upsertSaldoApertura: async (row: SaldoApertura): Promise<void> => {
     await dbRequest('upsertSaldoApertura', row as unknown as Record<string, unknown>);
   },

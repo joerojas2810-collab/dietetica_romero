@@ -383,6 +383,37 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ data });
       }
 
+            case 'getSaldosApertura': {
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .select('*')
+          .order('periodo', { ascending: false });
+
+        if (error) throw error;
+        return NextResponse.json({ data });
+      }
+
+      case 'getArqueosMes': {
+        const { inicio, fin } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+        };
+
+        if (!inicio || !fin) {
+          return NextResponse.json({ error: 'Faltan inicio o fin' }, { status: 400 });
+      }
+
+        const { data, error } = await supabase
+          .from('arqueo_diario')
+          .select('*')
+          .gte('fecha', inicio)
+          .lte('fecha', fin)
+          .order('fecha', { ascending: false });
+
+        if (error) throw error;
+        return NextResponse.json({ data });
+      }
+
       default:
         return NextResponse.json(
           { error: `Action desconocida: ${action}` },
