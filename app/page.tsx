@@ -1425,6 +1425,10 @@ function CierreMes() {
   const [saved, setSaved] = useState(false);
   const [yaExiste, setYaExiste] = useState(false);
 
+  const [aperturaEfectivo, setAperturaEfectivo] = useState(0);
+  const [aperturaDebito, setAperturaDebito] = useState(0);
+  const [aperturaMP, setAperturaMP] = useState(0);
+
   const [saldoEfectivo, setSaldoEfectivo] = useState(0);
   const [saldoDebito, setSaldoDebito] = useState(0);
   const [saldoMP, setSaldoMP] = useState(0);
@@ -1436,38 +1440,48 @@ function CierreMes() {
       setLoading(true);
       setSaved(false);
 
-      const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
-      const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
-
-      const movs = await db.getMovimientosMes(inicio, fin);
-
-      const efec = movs
-        .filter(m => m.metodo === 'Efectivo')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-
-      const deb = movs
-        .filter(m => m.metodo === 'Debito')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-
-      const mp = movs
-        .filter(m => m.metodo === 'MercadoPago')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-
-      setSaldoEfectivo(efec);
-      setSaldoDebito(deb);
-      setSaldoMP(mp);
-      setTotalEntradas(movs.reduce((s, m) => s + Number(m.entrada), 0));
-      setTotalSalidas(movs.reduce((s, m) => s + Number(m.salida), 0));
-
       const fechaBase = parseISO(mes);
+      const inicio = format(startOfMonth(fechaBase), 'yyyy-MM-dd');
+      const fin = format(endOfMonth(fechaBase), 'yyyy-MM-dd');
       const mesSiguiente = format(
         startOfMonth(new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1)),
         'yyyy-MM-dd'
       );
 
-      const existente = await db.getSaldoApertura(mesSiguiente);
-      setYaExiste(!!existente);
+      const [movs, apertura, existente] = await Promise.all([
+        db.getMovimientosMes(inicio, fin),
+        db.getSaldoApertura(mes),
+        db.getSaldoApertura(mesSiguiente),
+      ]);
 
+      const apEf = Number(apertura?.efectivo || 0);
+      const apDb = Number(apertura?.debito || 0);
+      const apMp = Number(apertura?.mercadopago || 0);
+
+      setAperturaEfectivo(apEf);
+      setAperturaDebito(apDb);
+      setAperturaMP(apMp);
+
+      const movEf = movs
+        .filter(m => m.metodo === 'Efectivo')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      const movDb = movs
+        .filter(m => m.metodo === 'Debito')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      const movMp = movs
+        .filter(m => m.metodo === 'MercadoPago')
+        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+      setSaldoEfectivo(apEf + movEf);
+      setSaldoDebito(apDb + movDb);
+      setSaldoMP(apMp + movMp);
+
+      setTotalEntradas(movs.reduce((s, m) => s + Number(m.entrada), 0));
+      setTotalSalidas(movs.reduce((s, m) => s + Number(m.salida), 0));
+
+      setYaExiste(!!existente);
       setLoading(false);
     };
 
@@ -1548,6 +1562,12 @@ function CierreMes() {
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
           <p className="mb-4 text-sm font-bold">Resumen de {mesNombre}</p>
           <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
+              <span className="text-xs font-medium text-[#40562a]">Apertura del mes</span>
+              <span className="text-sm font-bold text-[#40562a]">
+                {money(aperturaEfectivo + aperturaDebito + aperturaMP)}
+              </span>
+            </div>
             <div className="flex items-center justify-between rounded-xl bg-[#e5f1e2] px-4 py-3">
               <span className="text-xs font-medium text-[#3d6942]">Total entradas</span>
               <span className="text-sm font-bold text-[#3d6942]">{money(totalEntradas)}</span>
@@ -1557,7 +1577,7 @@ function CierreMes() {
               <span className="text-sm font-bold text-[#ba7665]">{money(totalSalidas)}</span>
             </div>
             <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
-              <span className="text-xs font-medium text-[#40562a]">Resultado</span>
+              <span className="text-xs font-medium text-[#40562a]">Resultado del mes</span>
               <span className="text-lg font-bold text-[#40562a]">{money(resultado)}</span>
             </div>
           </div>
@@ -1574,25 +1594,34 @@ function CierreMes() {
               <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
                 <Receipt size={14} /> Efectivo
               </span>
-              <span className="text-sm font-bold">{money(saldoEfectivo)}</span>
+              <div className="text-right">
+                <p className="text-[10px] text-[#99a398]">Apertura {money(aperturaEfectivo)}</p>
+                <span className="text-sm font-bold">{money(saldoEfectivo)}</span>
+              </div>
             </div>
 
             <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
               <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
                 <CreditCardIcon /> Débito
               </span>
-              <span className="text-sm font-bold">{money(saldoDebito)}</span>
+              <div className="text-right">
+                <p className="text-[10px] text-[#99a398]">Apertura {money(aperturaDebito)}</p>
+                <span className="text-sm font-bold">{money(saldoDebito)}</span>
+              </div>
             </div>
 
             <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
               <span className="flex items-center gap-2 text-xs font-medium text-[#6f7f6d]">
                 <Cloud size={14} /> MercadoPago
               </span>
-              <span className="text-sm font-bold">{money(saldoMP)}</span>
+              <div className="text-right">
+                <p className="text-[10px] text-[#99a398]">Apertura {money(aperturaMP)}</p>
+                <span className="text-sm font-bold">{money(saldoMP)}</span>
+              </div>
             </div>
 
             <div className="flex items-center justify-between rounded-xl bg-[#40562a] px-4 py-3 text-white">
-              <span className="text-xs font-medium">Saldo total</span>
+              <span className="text-xs font-medium">Saldo total final</span>
               <span className="text-lg font-bold">{money(saldoTotal)}</span>
             </div>
           </div>
