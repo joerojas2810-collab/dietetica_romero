@@ -828,10 +828,12 @@ const diferencia = totalCartucheraReal - totalSistema;
       categoria: 'EXTRAORDINARIO' as CategoriaGasto,
     });
 
-    setSaving(false);
     setSaved(true);
-    setCartucheraReal('');
-    setObservacion('');
+setCReal1000('');
+setCReal2000('');
+setCReal10000('');
+setCReal20000('');
+setObservacion('');
   };
 
   if (loading) return <div className="flex h-64 items-center justify-center text-[#849083]">Cargando...</div>;
