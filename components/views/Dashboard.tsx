@@ -13,7 +13,7 @@ import { Movimiento, ArqueoDiario, GastoFijo, SaldoApertura } from '@/lib/supaba
 import { db } from '@/lib/api';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { money, compactMoney, semaforo } from '@/lib/helpers';
+import { money, compactMoney, semaforo, semaforoMeta } from '@/lib/helpers';
 import StatCard from '@/components/shared/StatCard';
 import ControlBadge from '@/components/shared/ControlBadge';
 import ControlRow from '@/components/shared/ControlRow';
@@ -227,7 +227,7 @@ export default function Dashboard() {
         <ControlBadge
           label="Estado meta diaria"
           dif={brechaVsMeta}
-          status={semaforo(brechaVsMeta)}
+          status={semaforoMeta(brechaVsMeta)}
         />
       </div>
 
