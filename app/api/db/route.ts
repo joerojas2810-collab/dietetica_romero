@@ -23,6 +23,10 @@ const supabaseAdmin = createClient(
   }
 );
 
+// ─── Cache de tokens validados (dura 5 minutos) ──────────────────────────────
+const tokenCache = new Map<string, { valid: boolean; timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
 async function autenticar(req: NextRequest): Promise<boolean> {
   const apiSecret = req.headers.get('x-api-secret');
   if (apiSecret !== process.env.API_SECRET) return false;
@@ -32,14 +36,32 @@ async function autenticar(req: NextRequest): Promise<boolean> {
 
   const token = authHeader.replace('Bearer ', '');
 
+  // Verificar si ya validamos este token recientemente
+  const cached = tokenCache.get(token);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.valid;
+  }
+
+  // Si no está en caché, validar contra Supabase
   const {
     data: { user },
     error,
   } = await supabaseAdmin.auth.getUser(token);
 
-  if (error || !user) return false;
+  const valid = !error && !!user;
 
-  return true;
+  // Guardar en caché
+  tokenCache.set(token, { valid, timestamp: Date.now() });
+
+  // Limpiar tokens viejos cada 100 entradas
+  if (tokenCache.size > 100) {
+    const now = Date.now();
+    tokenCache.forEach((v, k) => {
+      if (now - v.timestamp > CACHE_TTL) tokenCache.delete(k);
+    });
+  }
+
+  return valid;
 }
 
 type MetodoPago = 'Efectivo' | 'Debito' | 'MercadoPago';

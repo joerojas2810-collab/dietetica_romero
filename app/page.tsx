@@ -1,6 +1,7 @@
 'use client';
 
 import Login from '@/components/Login';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import {
   BarChart3, CalendarDays, ChevronDown, CirclePlus,
@@ -14,16 +15,45 @@ import { es } from 'date-fns/locale';
 import NavItem from '@/components/shared/NavItem';
 import CreditCardIcon from '@/components/shared/CreditCardIcon';
 
-import Dashboard from '@/components/views/Dashboard';
-import DayForm from '@/components/views/DayForm';
-import Movements from '@/components/views/Movements';
-import Cartuchera from '@/components/views/Cartuchera';
-import ControlMP from '@/components/views/ControlMP';
-import ControlDebito from '@/components/views/ControlDebito';
-import PagosIndividuales from '@/components/views/PagosIndividuales';
-import Configuracion from '@/components/views/Configuracion';
-import CierreMes from '@/components/views/CierreMes';
-import Reportes from '@/components/views/Reportes';
+const Dashboard = dynamic(() => import('@/components/views/Dashboard'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const DayForm = dynamic(() => import('@/components/views/DayForm'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const Movements = dynamic(() => import('@/components/views/Movements'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const Cartuchera = dynamic(() => import('@/components/views/Cartuchera'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const ControlMP = dynamic(() => import('@/components/views/ControlMP'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const ControlDebito = dynamic(() => import('@/components/views/ControlDebito'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const PagosIndividuales = dynamic(() => import('@/components/views/PagosIndividuales'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const Configuracion = dynamic(() => import('@/components/views/Configuracion'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const CierreMes = dynamic(() => import('@/components/views/CierreMes'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
+
+const Reportes = dynamic(() => import('@/components/views/Reportes'), {
+  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+});
 
 type View =
   | 'dashboard'
