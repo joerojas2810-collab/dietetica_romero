@@ -1,17 +1,22 @@
 'use client';
 
+import { preloadView } from '@/lib/preload';
+
 export default function NavItem({
-  icon, label, badge, active, onClick,
+  icon, label, badge, active, onClick, viewKey,
 }: {
   icon?: React.ReactNode;
   label: string;
   badge?: string;
   active?: boolean;
   onClick?: () => void;
+  viewKey?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => viewKey && preloadView(viewKey)}
+      onTouchStart={() => viewKey && preloadView(viewKey)}
       className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all ${
         active
           ? 'bg-[#edf0e2] text-[#4d612e] shadow-sm'

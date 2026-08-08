@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { Movimiento, MetodoPago, CategoriaGasto } from '@/lib/supabase';
-import { money } from '@/lib/helpers';
 
 interface Props {
   movimiento: Movimiento;
@@ -16,6 +15,15 @@ interface Props {
   }) => void;
   onClose: () => void;
 }
+
+const METODOS: MetodoPago[] = ['Efectivo', 'Debito', 'Credito', 'MercadoPago'];
+
+const METODO_LABEL: Record<MetodoPago, string> = {
+  Efectivo: 'Efectivo',
+  Debito: 'Débito',
+  Credito: 'Crédito',
+  MercadoPago: 'MP',
+};
 
 export default function EditMovimientoModal({ movimiento, onSave, onClose }: Props) {
   const [concepto, setConcepto] = useState(movimiento.concepto);
@@ -34,7 +42,6 @@ export default function EditMovimientoModal({ movimiento, onSave, onClose }: Pro
 
   const handleSave = () => {
     if (!concepto.trim() || n(monto) <= 0) return;
-
     onSave({
       concepto: concepto.trim(),
       entrada: tipo === 'entrada' ? n(monto) : 0,
@@ -114,8 +121,8 @@ export default function EditMovimientoModal({ movimiento, onSave, onClose }: Pro
         {/* Método */}
         <div className="mb-4">
           <p className="mb-2 text-[11px] font-semibold text-[#788778]">Método</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(['Efectivo', 'Debito', 'MercadoPago'] as MetodoPago[]).map(m => (
+          <div className="grid grid-cols-4 gap-2">
+            {METODOS.map(m => (
               <button
                 key={m}
                 onClick={() => setMetodo(m)}
@@ -125,7 +132,7 @@ export default function EditMovimientoModal({ movimiento, onSave, onClose }: Pro
                     : 'border-[#e5eae1] text-[#849083]'
                 }`}
               >
-                {m === 'MercadoPago' ? 'MP' : m}
+                {METODO_LABEL[m]}
               </button>
             ))}
           </div>

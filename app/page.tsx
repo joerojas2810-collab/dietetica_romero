@@ -4,45 +4,49 @@ import Login from '@/components/Login';
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import {
-  BarChart3, CalendarDays, ChevronDown, CirclePlus,
+  BarChart3, Building2, CalendarDays, ChevronDown, CirclePlus,
   ClipboardList, Cloud, Menu, PiggyBank,
-  Settings2, ShieldCheck, X, Building2,
+  Settings2, ShieldCheck, X,
 } from 'lucide-react';
 import { supabaseAuth } from '@/lib/api';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import NavItem from '@/components/shared/NavItem';
+import {
+  DashboardSkeleton, DayFormSkeleton, MovementsSkeleton,
+  ControlSkeleton, CartucheraSkeleton, PagosSkeleton, GenericSkeleton,
+} from '@/components/shared/ViewSkeletons';
 
 const Dashboard = dynamic(() => import('@/components/views/Dashboard'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <DashboardSkeleton />,
 });
 const DayForm = dynamic(() => import('@/components/views/DayForm'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <DayFormSkeleton />,
 });
 const Movements = dynamic(() => import('@/components/views/Movements'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <MovementsSkeleton />,
 });
 const Cartuchera = dynamic(() => import('@/components/views/Cartuchera'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <CartucheraSkeleton />,
 });
 const ControlMP = dynamic(() => import('@/components/views/ControlMP'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <ControlSkeleton />,
 });
 const ControlBanco = dynamic(() => import('@/components/views/ControlBanco'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <ControlSkeleton />,
 });
 const PagosIndividuales = dynamic(() => import('@/components/views/PagosIndividuales'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <PagosSkeleton />,
 });
 const Configuracion = dynamic(() => import('@/components/views/Configuracion'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <GenericSkeleton />,
 });
 const CierreMes = dynamic(() => import('@/components/views/CierreMes'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <GenericSkeleton />,
 });
 const Reportes = dynamic(() => import('@/components/views/Reportes'), {
-  loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
+  loading: () => <GenericSkeleton />,
 });
 
 type View =
@@ -109,7 +113,7 @@ export default function Home() {
 
   if (checkingAuth) return (
     <div className="flex min-h-screen items-center justify-center bg-[#f6f7f2]">
-      <div className="text-sm text-[#849083]">Cargando...</div>
+      <DashboardSkeleton />
     </div>
   );
 
@@ -136,83 +140,32 @@ export default function Home() {
           </button>
         </div>
 
-        <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
+                <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
           Operación
         </p>
         <nav className="space-y-1">
-          <NavItem
-            active={view === 'dashboard'}
-            icon={<BarChart3 size={18} />}
-            label="Dashboard"
-            onClick={() => nav('dashboard')}
-          />
-          <NavItem
-            active={view === 'day'}
-            icon={<CalendarDays size={18} />}
-            label="Carga del día"
-            badge="Hoy"
-            onClick={() => nav('day')}
-          />
-          <NavItem
-            active={view === 'movements'}
-            icon={<ClipboardList size={18} />}
-            label="Movimientos"
-            onClick={() => nav('movements')}
-          />
+          <NavItem active={view === 'dashboard'} icon={<BarChart3 size={18} />} label="Dashboard" viewKey="dashboard" onClick={() => nav('dashboard')} />
+          <NavItem active={view === 'day'} icon={<CalendarDays size={18} />} label="Carga del día" badge="Hoy" viewKey="day" onClick={() => nav('day')} />
+          <NavItem active={view === 'movements'} icon={<ClipboardList size={18} />} label="Movimientos" viewKey="movements" onClick={() => nav('movements')} />
         </nav>
 
         <p className="mb-3 mt-6 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
           Arqueos
         </p>
         <nav className="space-y-1">
-          <NavItem
-            active={view === 'cartuchera'}
-            icon={<ShieldCheck size={18} />}
-            label="Cartuchera"
-            onClick={() => nav('cartuchera')}
-          />
-          <NavItem
-            active={view === 'controlmp'}
-            icon={<Cloud size={18} />}
-            label="Control MP"
-            onClick={() => nav('controlmp')}
-          />
-          <NavItem
-            active={view === 'controlbanco'}
-            icon={<Building2 size={18} />}
-            label="Control Banco"
-            onClick={() => nav('controlbanco')}
-          />
-          <NavItem
-            active={view === 'pagos'}
-            icon={<CirclePlus size={18} />}
-            label="Pagos individuales"
-            onClick={() => nav('pagos')}
-          />
+          <NavItem active={view === 'cartuchera'} icon={<ShieldCheck size={18} />} label="Cartuchera" viewKey="cartuchera" onClick={() => nav('cartuchera')} />
+          <NavItem active={view === 'controlmp'} icon={<Cloud size={18} />} label="Control MP" viewKey="controlmp" onClick={() => nav('controlmp')} />
+          <NavItem active={view === 'controlbanco'} icon={<Building2 size={18} />} label="Control Banco" viewKey="controlbanco" onClick={() => nav('controlbanco')} />
+          <NavItem active={view === 'pagos'} icon={<CirclePlus size={18} />} label="Pagos individuales" viewKey="pagos" onClick={() => nav('pagos')} />
         </nav>
 
         <p className="mb-3 mt-6 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
           Administración
         </p>
         <nav className="space-y-1">
-          <NavItem
-            active={view === 'cierre'}
-            icon={<PiggyBank size={18} />}
-            label="Cierre de mes"
-            onClick={() => nav('cierre')}
-          />
-          <NavItem
-            active={view === 'config'}
-            icon={<Settings2 size={18} />}
-            label="Configuración"
-            onClick={() => nav('config')}
-          />
-          <NavItem
-            active={view === 'reportes'}
-            icon={<BarChart3 size={18} />}
-            label="Reportes"
-            onClick={() => nav('reportes')}
-          />
+          <NavItem active={view === 'cierre'} icon={<PiggyBank size={18} />} label="Cierre de mes" viewKey="cierre" onClick={() => nav('cierre')} />
+          <NavItem active={view === 'config'} icon={<Settings2 size={18} />} label="Configuración" viewKey="config" onClick={() => nav('config')} />
+          <NavItem active={view === 'reportes'} icon={<BarChart3 size={18} />} label="Reportes" viewKey="reportes" onClick={() => nav('reportes')} />
         </nav>
 
         <div className="mt-auto rounded-2xl bg-[#eef3e8] p-4">
