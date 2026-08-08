@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   BarChart3, CalendarDays, Cloud, PiggyBank, Receipt,
-  ShieldCheck, Sparkles, TrendingUp, Wallet,
+  ShieldCheck, Sparkles, TrendingUp, Wallet, Building2,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
@@ -17,7 +17,6 @@ import { money, compactMoney, semaforo } from '@/lib/helpers';
 import StatCard from '@/components/shared/StatCard';
 import ControlBadge from '@/components/shared/ControlBadge';
 import ControlRow from '@/components/shared/ControlRow';
-import CreditCardIcon from '@/components/shared/CreditCardIcon';
 
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
@@ -28,7 +27,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
 
-    useEffect(() => {
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
@@ -45,22 +44,34 @@ export default function Dashboard() {
     fetchData();
   }, [mes]);
 
+  // ── Saldos por cuenta real ────────────────────────────────────────
+  const saldoEfectivo = movimientos
+    .filter(m => m.metodo === 'Efectivo')
+    .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+  // Banco = Débito + Crédito
+  const saldoBanco = movimientos
+    .filter(m => m.metodo === 'Debito' || m.metodo === 'Credito')
+    .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
+  const saldoMP = movimientos
+    .filter(m => m.metodo === 'MercadoPago')
+    .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+
   const totalEntradas = movimientos.reduce((s, m) => s + Number(m.entrada), 0);
   const totalSalidas = movimientos.reduce((s, m) => s + Number(m.salida), 0);
   const resultado = totalEntradas - totalSalidas;
+  const saldoTotal = saldoEfectivo + saldoBanco + saldoMP;
 
-  const saldoEfectivo = movimientos.filter(m => m.metodo === 'Efectivo').reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-  const saldoDebito = movimientos.filter(m => m.metodo === 'Debito').reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-  const saldoMP = movimientos.filter(m => m.metodo === 'MercadoPago').reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
-  const saldoTotal = saldoEfectivo + saldoDebito + saldoMP;
-
+  // ── Gráficos ──────────────────────────────────────────────────────
   const ventasPorDia = useMemo(() => {
     const mapa: Record<string, number> = {};
     movimientos.filter(m => m.entrada > 0).forEach(m => {
       mapa[m.fecha] = (mapa[m.fecha] || 0) + Number(m.entrada);
     });
     return Object.entries(mapa).map(([fecha, value]) => ({
-      day: format(parseISO(fecha), 'd'), value,
+      day: format(parseISO(fecha), 'd'),
+      value,
     }));
   }, [movimientos]);
 
@@ -69,9 +80,13 @@ export default function Dashboard() {
 
   const gastosPorCategoria = useMemo(() => {
     const colores: Record<string, string> = {
-      'MATERIA PRIMA': '#758b5b', 'PERSONAL': '#c6a15b',
-      'OPERATIVO': '#9aa88d', 'DESECHABLES': '#d9c8a4',
-      'AHORRO': '#4c6651', 'GISELA': '#a07b9c', 'EXTRAORDINARIO': '#c47b5b',
+      'MATERIA PRIMA': '#758b5b',
+      'PERSONAL':      '#c6a15b',
+      'OPERATIVO':     '#9aa88d',
+      'DESECHABLES':   '#d9c8a4',
+      'AHORRO':        '#4c6651',
+      'GISELA':        '#a07b9c',
+      'EXTRAORDINARIO':'#c47b5b',
     };
     const mapa: Record<string, number> = {};
     movimientos.filter(m => m.salida > 0 && m.categoria).forEach(m => {
@@ -82,64 +97,150 @@ export default function Dashboard() {
     }));
   }, [movimientos]);
 
+  // ── Meta diaria ───────────────────────────────────────────────────
   const totalGastosFijos = gastosFijos.reduce((s, g) => s + Number(g.monto), 0);
   const metaDiaria = totalGastosFijos > 0 ? Math.round(totalGastosFijos / 24) : 0;
   const brechaVsMeta = promedioDiario - metaDiaria;
-  const estadoMeta = semaforo(brechaVsMeta);
 
-  const difEfectivo = arqueo ? (arqueo.total_contado || 0) - saldoEfectivo : null;
-  const difDebito = arqueo ? (arqueo.disponible_debito || 0) - saldoDebito : null;
-  const difMP = arqueo ? (arqueo.disponible_mp || 0) - saldoMP : null;
+  // ── Diferencias del arqueo ────────────────────────────────────────
+  // Banco: usa disponible_banco si existe, sino disponible_debito (legacy)
+  const disponibleBanco = arqueo
+    ? Number(arqueo.disponible_banco ?? arqueo.disponible_debito ?? 0)
+    : null;
+  const difBanco = disponibleBanco !== null ? disponibleBanco - saldoBanco : null;
+  const difMP = arqueo ? (Number(arqueo.disponible_mp) || 0) - saldoMP : null;
+  // Efectivo: total_contado (caja chica) vs saldo efectivo
+  const difEfectivo = arqueo
+    ? (Number(arqueo.total_contado) || 0) - saldoEfectivo
+    : null;
 
-  if (loading) return <div className="flex h-64 items-center justify-center text-[#849083]">Cargando datos...</div>;
+  if (loading) return (
+    <div className="flex h-64 items-center justify-center text-[#849083]">
+      Cargando datos...
+    </div>
+  );
 
   return (
     <div className="animate-in fade-in duration-500">
+      {/* Header */}
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
             <Sparkles size={14} /> Tu negocio, en equilibrio
           </div>
-          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">Resumen del mes</h2>
-          <p className="mt-2 text-sm text-[#849083]">Promedio sobre {diasAbiertos} días abiertos</p>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
+            Resumen del mes
+          </h2>
+          <p className="mt-2 text-sm text-[#849083]">
+            Promedio sobre {diasAbiertos} días abiertos
+          </p>
         </div>
-        <select value={mes} onChange={e => setMes(e.target.value)}
-          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none">
+        <select
+          value={mes}
+          onChange={e => setMes(e.target.value)}
+          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+        >
           {Array.from({ length: 12 }, (_, i) => {
-            const d = new Date(); d.setMonth(d.getMonth() - i);
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
             const val = format(startOfMonth(d), 'yyyy-MM-dd');
-            return <option key={val} value={val}>{format(d, 'MMMM yyyy', { locale: es })}</option>;
+            return (
+              <option key={val} value={val}>
+                {format(d, 'MMMM yyyy', { locale: es })}
+              </option>
+            );
           })}
         </select>
       </div>
 
+      {/* ── KPIs principales ────────────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Saldo total" value={money(saldoTotal)} icon={<Wallet size={18} />} accent="green" />
-        <StatCard label="Efectivo" value={money(saldoEfectivo)} icon={<Receipt size={18} />} accent="sand" />
-        <StatCard label="Débito" value={money(saldoDebito)} icon={<CreditCardIcon />} accent="blue" />
-        <StatCard label="MercadoPago" value={money(saldoMP)} icon={<Cloud size={18} />} accent="lilac" />
-        <StatCard label="Resultado del mes" value={money(resultado)} icon={<TrendingUp size={18} />} accent="green" />
+        <StatCard
+          label="Saldo total"
+          value={money(saldoTotal)}
+          icon={<Wallet size={18} />}
+          accent="green"
+        />
+        <StatCard
+          label="Efectivo"
+          value={money(saldoEfectivo)}
+          icon={<Receipt size={18} />}
+          accent="sand"
+        />
+        <StatCard
+          label="Banco"
+          value={money(saldoBanco)}
+          icon={<Building2 size={18} />}
+          accent="blue"
+        />
+        <StatCard
+          label="MercadoPago"
+          value={money(saldoMP)}
+          icon={<Cloud size={18} />}
+          accent="lilac"
+        />
+        <StatCard
+          label="Resultado del mes"
+          value={money(resultado)}
+          icon={<TrendingUp size={18} />}
+          accent="green"
+        />
       </div>
 
+      {/* ── Meta diaria ─────────────────────────────────────────────── */}
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Gastos fijos del mes" value={money(totalGastosFijos)} icon={<PiggyBank size={18} />} accent="sand" />
-        <StatCard label="Meta diaria" value={money(metaDiaria)} icon={<CalendarDays size={18} />} accent="blue" />
-        <StatCard label="Brecha vs meta" value={`${brechaVsMeta > 0 ? '+' : brechaVsMeta < 0 ? '-' : ''}${money(Math.abs(brechaVsMeta))}`} icon={<Sparkles size={18} />} accent={brechaVsMeta >= 0 ? 'green' : 'sand'} />
+        <StatCard
+          label="Gastos fijos del mes"
+          value={money(totalGastosFijos)}
+          icon={<PiggyBank size={18} />}
+          accent="sand"
+        />
+        <StatCard
+          label="Meta diaria"
+          value={money(metaDiaria)}
+          icon={<CalendarDays size={18} />}
+          accent="blue"
+        />
+        <StatCard
+          label="Brecha vs meta"
+          value={`${brechaVsMeta > 0 ? '+' : brechaVsMeta < 0 ? '-' : ''}${money(Math.abs(brechaVsMeta))}`}
+          icon={<Sparkles size={18} />}
+          accent={brechaVsMeta >= 0 ? 'green' : 'sand'}
+        />
       </div>
 
       <div className="mt-4">
-        <ControlBadge label="Estado meta diaria" dif={brechaVsMeta} status={estadoMeta} />
+        <ControlBadge
+          label="Estado meta diaria"
+          dif={brechaVsMeta}
+          status={semaforo(brechaVsMeta)}
+        />
       </div>
 
+      {/* ── Arqueo badges ───────────────────────────────────────────── */}
       {arqueo && (
         <div className="mt-5 grid gap-4 sm:grid-cols-3">
-          <ControlBadge label="Arqueo efectivo" dif={difEfectivo} status={semaforo(difEfectivo)} />
-          <ControlBadge label="Disponible Débito" dif={difDebito} status={semaforo(difDebito)} />
-          <ControlBadge label="Disponible MP" dif={difMP} status={semaforo(difMP)} />
+          <ControlBadge
+            label="Arqueo efectivo"
+            dif={difEfectivo}
+            status={semaforo(difEfectivo)}
+          />
+          <ControlBadge
+            label="Disponible Banco"
+            dif={difBanco}
+            status={semaforo(difBanco)}
+          />
+          <ControlBadge
+            label="Disponible MP"
+            dif={difMP}
+            status={semaforo(difMP)}
+          />
         </div>
       )}
 
+      {/* ── Gráficos ────────────────────────────────────────────────── */}
       <div className="mt-7 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
+        {/* Barras ventas */}
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
           <div className="mb-5 flex items-start justify-between">
             <div>
@@ -148,8 +249,12 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="mb-4 flex flex-wrap items-baseline gap-x-5 gap-y-2">
-            <span className="text-3xl font-bold tracking-[-0.05em]">{compactMoney(totalEntradas)}</span>
-            <span className="text-xs text-[#849083]">Promedio diario: <strong>{money(promedioDiario)}</strong></span>
+            <span className="text-3xl font-bold tracking-[-0.05em]">
+              {compactMoney(totalEntradas)}
+            </span>
+            <span className="text-xs text-[#849083]">
+              Promedio diario: <strong>{money(promedioDiario)}</strong>
+            </span>
           </div>
           <div className="h-[260px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -168,11 +273,14 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Pie gastos */}
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-sm font-bold">Gastos por categoría</p>
-              <p className="mt-1 text-xs text-[#99a398]">Distribución de {compactMoney(totalSalidas)}</p>
+              <p className="mt-1 text-xs text-[#99a398]">
+                Distribución de {compactMoney(totalSalidas)}
+              </p>
             </div>
           </div>
           {gastosPorCategoria.length > 0 ? (
@@ -180,10 +288,23 @@ export default function Dashboard() {
               <div className="relative mx-auto mt-2 h-[230px] w-full max-w-[290px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={gastosPorCategoria} dataKey="value" nameKey="name" innerRadius={72} outerRadius={97} paddingAngle={3} stroke="none">
-                      {gastosPorCategoria.map(entry => <Cell key={entry.name} fill={entry.color} />)}
+                    <Pie
+                      data={gastosPorCategoria}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={72}
+                      outerRadius={97}
+                      paddingAngle={3}
+                      stroke="none"
+                    >
+                      {gastosPorCategoria.map(entry => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
                     </Pie>
-                    <Tooltip formatter={v => money(Number(v))} contentStyle={{ border: '1px solid #e3e9df', borderRadius: 12, fontSize: 12 }} />
+                    <Tooltip
+                      formatter={v => money(Number(v))}
+                      contentStyle={{ border: '1px solid #e3e9df', borderRadius: 12, fontSize: 12 }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -204,10 +325,13 @@ export default function Dashboard() {
               </div>
             </>
           ) : (
-            <div className="flex h-48 items-center justify-center text-sm text-[#849083]">Sin gastos cargados</div>
+            <div className="flex h-48 items-center justify-center text-sm text-[#849083]">
+              Sin gastos cargados
+            </div>
           )}
         </div>
 
+        {/* Línea evolución + controles */}
         <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
           <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
             <div className="mb-4 flex items-start justify-between">
@@ -230,14 +354,19 @@ export default function Dashboard() {
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-2 flex gap-4 text-[11px] text-[#8a9689]">
-                  <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#6f8441]" />Ventas</span>
+                  <span className="flex items-center gap-1.5">
+                    <i className="h-2 w-2 rounded-full bg-[#6f8441]" />Ventas
+                  </span>
                 </div>
               </>
             ) : (
-              <div className="flex h-48 items-center justify-center text-sm text-[#849083]">Sin datos para graficar</div>
+              <div className="flex h-48 items-center justify-center text-sm text-[#849083]">
+                Sin datos para graficar
+              </div>
             )}
           </div>
 
+          {/* Controles del día */}
           <div className="rounded-3xl bg-[#40562a] p-6 text-white shadow-xl shadow-[#40562a20]">
             <div className="flex items-start justify-between">
               <div>
@@ -249,13 +378,27 @@ export default function Dashboard() {
               </span>
             </div>
             <div className="mt-7 space-y-4">
-              <ControlRow label="Arqueo de efectivo" value={difEfectivo !== null ? money(difEfectivo) : '—'} status={semaforo(difEfectivo)} />
-              <ControlRow label="Disponible Débito" value={difDebito !== null ? money(difDebito) : '—'} status={semaforo(difDebito)} />
-              <ControlRow label="Disponible MP" value={difMP !== null ? money(difMP) : '—'} status={semaforo(difMP)} />
+              <ControlRow
+                label="Arqueo efectivo"
+                value={difEfectivo !== null ? money(difEfectivo) : '—'}
+                status={semaforo(difEfectivo)}
+              />
+              <ControlRow
+                label="Disponible Banco"
+                value={difBanco !== null ? money(difBanco) : '—'}
+                status={semaforo(difBanco)}
+              />
+              <ControlRow
+                label="Disponible MP"
+                value={difMP !== null ? money(difMP) : '—'}
+                status={semaforo(difMP)}
+              />
             </div>
             {arqueo?.observaciones && (
               <div className="mt-5 rounded-xl bg-white/10 p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[#c0d7bd]">Observación</p>
+                <p className="text-[10px] uppercase tracking-wider text-[#c0d7bd]">
+                  Observación
+                </p>
                 <p className="mt-1 text-xs">{arqueo.observaciones}</p>
               </div>
             )}

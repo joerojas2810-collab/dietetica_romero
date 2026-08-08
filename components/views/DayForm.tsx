@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   ArrowUpRight, CalendarDays, CirclePlus, Cloud,
-  Receipt, ShieldCheck, Sparkles, Trash2,
+  Receipt, ShieldCheck, Sparkles, Trash2, CreditCard,
 } from 'lucide-react';
 import { Movimiento, MetodoPago, CategoriaGasto } from '@/lib/supabase';
 import { db } from '@/lib/api';
@@ -28,6 +28,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const [cobroMP, setCobroMP] = useState('');
   const [cobroEfectivo, setCobroEfectivo] = useState('');
   const [cobroDebito, setCobroDebito] = useState('');
+  const [cobroCredito, setCobroCredito] = useState('');
   const [qty100, setQty100] = useState('');
   const [qty200, setQty200] = useState('');
   const [qty500, setQty500] = useState('');
@@ -41,7 +42,10 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const [saving, setSaving] = useState(false);
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
-  const totalCobrado = n(cobroMP) + n(cobroEfectivo) + n(cobroDebito);
+
+  const totalCobrado = n(cobroMP) + n(cobroEfectivo) + n(cobroDebito) + n(cobroCredito);
+  const totalBanco = n(cobroDebito) + n(cobroCredito);
+
   const val100 = n(qty100) * 100;
   const val200 = n(qty200) * 200;
   const val500 = n(qty500) * 500;
@@ -59,19 +63,36 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
       await db.deleteMovimientosDia(fecha);
 
       const cobros: Omit<Movimiento, 'id' | 'created_at'>[] = [];
-      if (n(cobroMP) > 0) cobros.push({ fecha, concepto: 'Cobro MP', entrada: n(cobroMP), salida: 0, metodo: 'MercadoPago' });
-      if (n(cobroEfectivo) > 0) cobros.push({ fecha, concepto: 'Cobro Efectivo', entrada: n(cobroEfectivo), salida: 0, metodo: 'Efectivo' });
-      if (n(cobroDebito) > 0) cobros.push({ fecha, concepto: 'Cobro Débito', entrada: n(cobroDebito), salida: 0, metodo: 'Debito' });
+      if (n(cobroMP) > 0)
+        cobros.push({ fecha, concepto: 'Cobro MP', entrada: n(cobroMP), salida: 0, metodo: 'MercadoPago' });
+      if (n(cobroEfectivo) > 0)
+        cobros.push({ fecha, concepto: 'Cobro Efectivo', entrada: n(cobroEfectivo), salida: 0, metodo: 'Efectivo' });
+      if (n(cobroDebito) > 0)
+        cobros.push({ fecha, concepto: 'Cobro Débito', entrada: n(cobroDebito), salida: 0, metodo: 'Debito' });
+      if (n(cobroCredito) > 0)
+        cobros.push({ fecha, concepto: 'Cobro Crédito', entrada: n(cobroCredito), salida: 0, metodo: 'Credito' });
 
       const gastosRows: Omit<Movimiento, 'id' | 'created_at'>[] = gastos
         .filter(g => g.concept.trim() && n(g.amount) > 0)
-        .map(g => ({ fecha, concepto: g.concept, entrada: 0, salida: n(g.amount), metodo: g.method, categoria: g.category }));
+        .map(g => ({
+          fecha,
+          concepto: g.concept,
+          entrada: 0,
+          salida: n(g.amount),
+          metodo: g.method,
+          categoria: g.category,
+        }));
 
       await db.insertMovimientos([...cobros, ...gastosRows]);
       await db.upsertArqueo({
         fecha,
-        bill_100: val100, bill_200: val200, bill_500: val500,
-        bill_1000: val1000, bill_2000: val2000,
+        bill_100: val100,
+        bill_200: val200,
+        bill_500: val500,
+        bill_1000: val1000,
+        bill_2000: val2000,
+        bill_10000: val10000,
+        bill_20000: val20000,
         a_caja_fuerte: cajaFuerteTotal,
       });
 
@@ -90,28 +111,77 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
             <CalendarDays size={14} /> Registro diario
           </div>
-          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">Cargá el día</h2>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
+            Cargá el día
+          </h2>
           <p className="mt-2 text-sm text-[#849083]">Completá los valores del cierre.</p>
         </div>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none" />
+        <input
+          type="date"
+          value={fecha}
+          onChange={e => setFecha(e.target.value)}
+          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+        />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="space-y-5">
-          <SectionCard number="01" title="Cobros del sistema" description="Ingresá lo que informa el sistema.">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <AmountField label="Cobro MP" value={cobroMP} setValue={setCobroMP} icon={<Cloud size={16} />} />
-              <AmountField label="Cobro Efectivo" value={cobroEfectivo} setValue={setCobroEfectivo} icon={<Receipt size={16} />} />
-              <AmountField label="Cobro Débito" value={cobroDebito} setValue={setCobroDebito} icon={<CreditCardIcon />} />
+          {/* ── 01 Cobros ──────────────────────────────────────────────── */}
+          <SectionCard
+            number="01"
+            title="Cobros del sistema"
+            description="Ingresá lo que informa Franquify."
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <AmountField
+                label="Cobro Efectivo"
+                value={cobroEfectivo}
+                setValue={setCobroEfectivo}
+                icon={<Receipt size={16} />}
+              />
+              <AmountField
+                label="Cobro MP"
+                value={cobroMP}
+                setValue={setCobroMP}
+                icon={<Cloud size={16} />}
+              />
+              <AmountField
+                label="Cobro Débito"
+                value={cobroDebito}
+                setValue={setCobroDebito}
+                icon={<CreditCardIcon />}
+              />
+              <AmountField
+                label="Cobro Crédito"
+                value={cobroCredito}
+                setValue={setCobroCredito}
+                icon={<CreditCard size={16} />}
+              />
             </div>
+
+            {/* Total cobrado */}
             <div className="mt-4 flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
               <span className="text-xs font-medium text-[#768676]">Total cobrado</span>
               <span className="text-lg font-bold text-[#40562a]">{money(totalCobrado)}</span>
             </div>
+
+            {/* Subtotal banco */}
+            {totalBanco > 0 && (
+              <div className="mt-2 flex items-center justify-between rounded-xl border border-[#e5eae1] px-4 py-2">
+                <span className="text-[11px] font-medium text-[#849083]">
+                  → Banco (Déb + Cred)
+                </span>
+                <span className="text-sm font-bold text-[#526b53]">{money(totalBanco)}</span>
+              </div>
+            )}
           </SectionCard>
 
-          <SectionCard number="02" title="Arqueo de billetes" description="Contá el efectivo físico.">
+          {/* ── 02 Arqueo de billetes ──────────────────────────────────── */}
+          <SectionCard
+            number="02"
+            title="Arqueo de billetes"
+            description="Contá el efectivo físico."
+          >
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <BillField label="$100" qty={qty100} setQty={setQty100} denom={100} />
               <BillField label="$200" qty={qty200} setQty={setQty200} denom={200} />
@@ -119,6 +189,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
               <BillField label="$1.000" qty={qty1000} setQty={setQty1000} denom={1000} />
               <BillField label="$2.000" qty={qty2000} setQty={setQty2000} denom={2000} />
             </div>
+
             <div className="mt-4 rounded-xl border border-[#d5e5d1] bg-[#f2f0e8] p-4">
               <p className="mb-3 text-xs font-bold text-[#40562a]">→ A cartuchera</p>
               <div className="grid grid-cols-2 gap-3">
@@ -132,30 +203,83 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
                 </div>
               )}
             </div>
+
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl bg-[#40562a] p-4 text-white">
                 <p className="text-[10px] uppercase tracking-wider text-[#bdd6b8]">Total contado</p>
                 <p className="mt-1 text-2xl font-bold">{money(totalContado)}</p>
               </div>
               <div className="rounded-xl border border-[#d5e5d1] bg-[#f2f0e8] p-4">
-                <p className="text-[10px] uppercase tracking-wider text-[#759376]">Diferencia vs. sistema</p>
+                <p className="text-[10px] uppercase tracking-wider text-[#759376]">
+                  Diferencia vs. sistema
+                </p>
                 <p className="mt-1 text-2xl font-bold text-[#4f8755]">
-                  {difEfectivo === 0 ? '✓ Sin diferencia' : difEfectivo > 0 ? `+${money(difEfectivo)}` : `-${money(Math.abs(difEfectivo))}`}
+                  {difEfectivo === 0
+                    ? '✓ Sin diferencia'
+                    : difEfectivo > 0
+                      ? `+${money(difEfectivo)}`
+                      : `-${money(Math.abs(difEfectivo))}`}
                 </p>
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard number="03" title="Gastos del día" description="Sumá cada gasto.">
+          {/* ── 03 Gastos ──────────────────────────────────────────────── */}
+          <SectionCard
+            number="03"
+            title="Gastos del día"
+            description="Sumá cada gasto."
+          >
             <div className="space-y-3">
               {gastos.map((row, i) => (
-                <div key={i} className="grid gap-2 rounded-xl border border-[#e8ede5] bg-[#fbfcfa] p-3 sm:grid-cols-[1.3fr_0.7fr_0.8fr_0.9fr_auto] sm:items-center sm:border-0 sm:bg-transparent sm:p-0">
-                  <input value={row.concept} onChange={e => setGastos(gastos.map((g, j) => j === i ? { ...g, concept: e.target.value } : g))} placeholder="Ej: Compra proveedor" className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-sm outline-none focus:border-[#9ab498]" />
-                  <input value={row.amount} onChange={e => setGastos(gastos.map((g, j) => j === i ? { ...g, amount: e.target.value } : g))} placeholder="$ 0" inputMode="numeric" className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-sm outline-none focus:border-[#9ab498]" />
-                  <select value={row.method} onChange={e => setGastos(gastos.map((g, j) => j === i ? { ...g, method: e.target.value as MetodoPago } : g))} className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-xs outline-none">
-                    <option>Efectivo</option><option>Debito</option><option>MercadoPago</option>
+                <div
+                  key={i}
+                  className="grid gap-2 rounded-xl border border-[#e8ede5] bg-[#fbfcfa] p-3 sm:grid-cols-[1.3fr_0.7fr_0.8fr_0.9fr_auto] sm:items-center sm:border-0 sm:bg-transparent sm:p-0"
+                >
+                  <input
+                    value={row.concept}
+                    onChange={e =>
+                      setGastos(gastos.map((g, j) =>
+                        j === i ? { ...g, concept: e.target.value } : g
+                      ))
+                    }
+                    placeholder="Ej: Compra proveedor"
+                    className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-sm outline-none focus:border-[#9ab498]"
+                  />
+                  <input
+                    value={row.amount}
+                    onChange={e =>
+                      setGastos(gastos.map((g, j) =>
+                        j === i ? { ...g, amount: e.target.value } : g
+                      ))
+                    }
+                    placeholder="$ 0"
+                    inputMode="numeric"
+                    className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-sm outline-none focus:border-[#9ab498]"
+                  />
+                  <select
+                    value={row.method}
+                    onChange={e =>
+                      setGastos(gastos.map((g, j) =>
+                        j === i ? { ...g, method: e.target.value as MetodoPago } : g
+                      ))
+                    }
+                    className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-xs outline-none"
+                  >
+                    <option value="Efectivo">Efectivo</option>
+                    <option value="MercadoPago">MercadoPago</option>
+                    <option value="Debito">Débito (Banco)</option>
+                    <option value="Credito">Crédito (Banco)</option>
                   </select>
-                  <select value={row.category} onChange={e => setGastos(gastos.map((g, j) => j === i ? { ...g, category: e.target.value as CategoriaGasto } : g))} className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-xs outline-none">
+                  <select
+                    value={row.category}
+                    onChange={e =>
+                      setGastos(gastos.map((g, j) =>
+                        j === i ? { ...g, category: e.target.value as CategoriaGasto } : g
+                      ))
+                    }
+                    className="h-11 rounded-lg border border-[#e2e8df] bg-white px-3 text-xs outline-none"
+                  >
                     <option value="PERSONAL">Personal</option>
                     <option value="OPERATIVO">Operativo</option>
                     <option value="MATERIA PRIMA">Materia Prima</option>
@@ -164,39 +288,89 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
                     <option value="GISELA">Gisela</option>
                     <option value="AHORRO">Ahorro</option>
                   </select>
-                  <button onClick={() => setGastos(gastos.filter((_, j) => j !== i))} className="flex h-10 w-10 items-center justify-center rounded-lg text-[#b5beb4] hover:bg-[#fff0ee] hover:text-[#c7796e]">
+                  <button
+                    onClick={() => setGastos(gastos.filter((_, j) => j !== i))}
+                    className="flex h-10 w-10 items-center justify-center rounded-lg text-[#b5beb4] hover:bg-[#fff0ee] hover:text-[#c7796e]"
+                  >
                     <Trash2 size={16} />
                   </button>
                 </div>
               ))}
             </div>
-            <button onClick={() => setGastos([...gastos, { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }])} className="mt-4 flex items-center gap-2 text-xs font-bold text-[#527758] hover:text-[#40562a]">
+            <button
+              onClick={() =>
+                setGastos([...gastos, { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }])
+              }
+              className="mt-4 flex items-center gap-2 text-xs font-bold text-[#527758] hover:text-[#40562a]"
+            >
               <CirclePlus size={16} /> Agregar otro gasto
             </button>
           </SectionCard>
         </div>
 
+        {/* ── Resumen lateral ──────────────────────────────────────────── */}
         <div className="h-fit space-y-5 xl:sticky xl:top-[100px]">
           <div className="rounded-3xl bg-[#40562a] p-6 text-white shadow-xl shadow-[#40562a20]">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#c2dbbe]">
               <Sparkles size={14} /> Resumen del día
             </div>
+
             <p className="mt-6 text-xs text-[#bdd5b9]">Total cobrado</p>
             <p className="mt-1 text-3xl font-bold tracking-[-0.05em]">{money(totalCobrado)}</p>
+
             <div className="my-5 h-px bg-white/15" />
+
             <div className="space-y-3 text-xs">
-              <div className="flex justify-between"><span className="text-[#c5d8c1]">MercadoPago</span><span className="font-bold">{money(n(cobroMP))}</span></div>
-              <div className="flex justify-between"><span className="text-[#c5d8c1]">Efectivo</span><span className="font-bold">{money(n(cobroEfectivo))}</span></div>
-              <div className="flex justify-between"><span className="text-[#c5d8c1]">Débito</span><span className="font-bold">{money(n(cobroDebito))}</span></div>
-              <div className="flex justify-between"><span className="text-[#c5d8c1]">Gastos cargados</span><span className="font-bold">{gastos.filter(g => n(g.amount) > 0).length}</span></div>
+              <div className="flex justify-between">
+                <span className="text-[#c5d8c1]">Efectivo</span>
+                <span className="font-bold">{money(n(cobroEfectivo))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#c5d8c1]">MercadoPago</span>
+                <span className="font-bold">{money(n(cobroMP))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#c5d8c1]">Débito</span>
+                <span className="font-bold">{money(n(cobroDebito))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#c5d8c1]">Crédito</span>
+                <span className="font-bold">{money(n(cobroCredito))}</span>
+              </div>
+
+              {totalBanco > 0 && (
+                <>
+                  <div className="h-px bg-white/10" />
+                  <div className="flex justify-between">
+                    <span className="text-[#a8c5a3]">→ Total Banco</span>
+                    <span className="font-bold text-[#d7e9c9]">{money(totalBanco)}</span>
+                  </div>
+                </>
+              )}
+
+              <div className="h-px bg-white/10" />
+              <div className="flex justify-between">
+                <span className="text-[#c5d8c1]">Gastos cargados</span>
+                <span className="font-bold">
+                  {gastos.filter(g => n(g.amount) > 0).length}
+                </span>
+              </div>
             </div>
-            <button onClick={handleGuardar} disabled={saving} className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-[#d7e9c9] py-3.5 text-sm font-bold text-[#40562a] transition hover:bg-white disabled:opacity-60">
+
+            <button
+              onClick={handleGuardar}
+              disabled={saving}
+              className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-[#d7e9c9] py-3.5 text-sm font-bold text-[#40562a] transition hover:bg-white disabled:opacity-60"
+            >
               {saving ? 'Guardando...' : 'Guardar el día'} <ArrowUpRight size={16} />
             </button>
           </div>
+
           <div className="flex gap-3 rounded-2xl border border-[#e3e9de] bg-white p-4">
             <ShieldCheck size={19} className="shrink-0 text-[#6a986c]" />
-            <p className="text-xs leading-5 text-[#849083]">Si ya cargaste este día, los datos se actualizan automáticamente. Nada se duplica.</p>
+            <p className="text-xs leading-5 text-[#849083]">
+              Si ya cargaste este día, los datos se actualizan automáticamente. Nada se duplica.
+            </p>
           </div>
         </div>
       </div>

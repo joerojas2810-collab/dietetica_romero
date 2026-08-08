@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import {
-  ArrowDownLeft, ArrowUpRight, Cloud, Pencil, ShieldCheck, Trash2,
-  CreditCard, Smartphone, Banknote, ChevronDown, ChevronUp,
+  ArrowDownLeft, ArrowUpRight, Pencil, ShieldCheck, Trash2,
+  CreditCard, Smartphone, Banknote, ChevronDown, ChevronUp, Building2,
 } from 'lucide-react';
 import { Movimiento } from '@/lib/supabase';
 import { db } from '@/lib/api';
@@ -13,7 +13,6 @@ import EditMovimientoModal from '@/components/shared/EditMovimientoModal';
 import { format } from 'date-fns';
 
 type Metodo = 'Debito' | 'Credito' | 'MercadoPago' | 'Efectivo';
-type DecisionMP = 'ajuste_metodo' | 'diferencia_real' | null;
 
 const METODOS_CONFIG: Record<Metodo, {
   label: string;
@@ -59,7 +58,9 @@ const METODOS_CONFIG: Record<Metodo, {
 
 const METODOS: Metodo[] = ['Debito', 'Credito', 'MercadoPago', 'Efectivo'];
 
-export default function ControlMP() {
+type DecisionBanco = 'comision' | 'ajuste' | null;
+
+export default function ControlBanco() {
   const [loading, setLoading] = useState(true);
   const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'));
 
@@ -70,14 +71,12 @@ export default function ControlMP() {
     Debito: 0, Credito: 0, MercadoPago: 0, Efectivo: 0,
   });
   const [expandido, setExpandido] = useState<Record<Metodo, boolean>>({
-    Debito: false, Credito: false, MercadoPago: true, Efectivo: false,
+    Debito: true, Credito: true, MercadoPago: false, Efectivo: false,
   });
 
-  // Control MP
-  const [cierreAnterior, setCierreAnterior] = useState('');
-  const [cierreHoy, setCierreHoy] = useState('');
-  const [egresosMP, setEgresosMP] = useState(0);
-  const [decision, setDecision] = useState<DecisionMP>(null);
+  // Control banco
+  const [acreditadoBanco, setAcreditadoBanco] = useState('');
+  const [decision, setDecision] = useState<DecisionBanco>(null);
   const [observacion, setObservacion] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -85,18 +84,17 @@ export default function ControlMP() {
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
 
-  const ingresosMP = ingresosPorMetodo.MercadoPago;
-  const esperado = n(cierreAnterior) + ingresosMP - egresosMP;
-  const cierreReal = n(cierreHoy);
-  // positivo = sobra en MP, negativo = falta en MP
-  const diferencia = cierreReal - esperado;
-  const porcentaje = esperado > 0
-    ? ((Math.abs(diferencia) / esperado) * 100).toFixed(2)
+  // Banco = Débito + Crédito
+  const cobradoBanco = ingresosPorMetodo.Debito + ingresosPorMetodo.Credito;
+  const acreditadoReal = n(acreditadoBanco);
+  // diferencia: positivo = acreditaron más, negativo = acreditaron menos
+  const diferencia = acreditadoReal - cobradoBanco;
+  const porcentaje = cobradoBanco > 0
+    ? ((Math.abs(diferencia) / cobradoBanco) * 100).toFixed(2)
     : '0';
 
   const fetchData = async () => {
     setLoading(true);
-
     const results: Record<Metodo, Movimiento[]> = {
       Debito: [], Credito: [], MercadoPago: [], Efectivo: [],
     };
@@ -112,16 +110,13 @@ export default function ControlMP() {
       })
     );
 
-    const egMP = results.MercadoPago.reduce((s, m) => s + Number(m.salida), 0);
-
     setMovsPorMetodo(results);
     setIngresosPorMetodo(ingresos);
-    setEgresosMP(egMP);
     setLoading(false);
     setSaved(false);
     setDecision(null);
     setObservacion('');
-    setCierreHoy('');
+    setAcreditadoBanco('');
   };
 
   useEffect(() => { fetchData(); }, [fecha]);
@@ -130,25 +125,25 @@ export default function ControlMP() {
     if (diferencia !== 0 && !decision) return;
     setSaving(true);
 
-    // Guardar cierre real en arqueo
-    await db.upsertArqueo({ fecha, disponible_mp: cierreReal });
+    // Guardar acreditado real en arqueo
+    await db.upsertArqueo({ fecha, disponible_banco: acreditadoReal });
 
     if (diferencia !== 0) {
-      if (decision === 'ajuste_metodo') {
-        // Error de imputación entre métodos → solo registrar en diferencias
+      if (decision === 'comision') {
+        // Comisión → movimiento de salida real
+        await db.insertMovimientos([{
+          fecha,
+          concepto: `Comisión banco POSNET (${porcentaje}%)`,
+          entrada: 0,
+          salida: Math.abs(diferencia),
+          metodo: 'Debito',
+          categoria: 'OPERATIVO',
+        }]);
+      } else if (decision === 'ajuste') {
+        // Ajuste → registrar en diferencias_arqueo
         await db.insertDiferencia({
           fecha,
-          metodo: 'MercadoPago',
-          monto: Math.abs(diferencia),
-          signo: diferencia > 0 ? 1 : -1,
-          tipo: 'reasignacion',
-          observacion: observacion || null,
-        });
-      } else if (decision === 'diferencia_real') {
-        // Diferencia real de dinero → registrar en diferencias
-        await db.insertDiferencia({
-          fecha,
-          metodo: 'MercadoPago',
+          metodo: diferencia > 0 ? 'Credito' : 'Debito',
           monto: Math.abs(diferencia),
           signo: diferencia > 0 ? 1 : -1,
           tipo: 'diferencia_real',
@@ -180,7 +175,6 @@ export default function ControlMP() {
   };
 
   const totalCobrado = Object.values(ingresosPorMetodo).reduce((a, b) => a + b, 0);
-  const cobradoBanco = ingresosPorMetodo.Debito + ingresosPorMetodo.Credito;
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center text-[#849083]">
@@ -194,13 +188,13 @@ export default function ControlMP() {
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
-            <Cloud size={14} /> Control de cierre
+            <Building2 size={14} /> Control de cierre
           </div>
           <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
-            MercadoPago
+            Banco
           </h2>
           <p className="mt-2 text-sm text-[#849083]">
-            Verificá que el saldo real coincida con el sistema.
+            Débito + Crédito → misma cuenta. Compará con lo acreditado.
           </p>
         </div>
         <input
@@ -257,11 +251,11 @@ export default function ControlMP() {
             })}
           </div>
 
-          {/* Subtotal banco — útil para cruzar diferencias */}
+          {/* Subtotal banco */}
           {cobradoBanco > 0 && (
             <div className="mt-3 flex items-center justify-between rounded-xl border border-[#c9ddc5] bg-[#f2f8ef] px-4 py-2">
               <span className="text-[11px] font-semibold text-[#3d6942]">
-                → Banco (Déb + Cred)
+                → Total Banco (Déb + Cred)
               </span>
               <span className="text-sm font-bold text-[#3d6942]">{money(cobradoBanco)}</span>
             </div>
@@ -327,55 +321,44 @@ export default function ControlMP() {
           })}
         </div>
 
-        {/* ── CIERRE ANTERIOR ────────────────────────────────────────── */}
+        {/* ── CONTROL BANCO ──────────────────────────────────────────── */}
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          <p className="mb-3 text-sm font-bold">Cierre del día anterior</p>
-          <AmountField
-            label="Último saldo MP"
-            value={cierreAnterior}
-            setValue={setCierreAnterior}
-          />
-        </div>
-
-        {/* ── SALDO ESPERADO ─────────────────────────────────────────── */}
-        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          <div className="mb-3 flex items-center gap-2">
-            <Smartphone size={16} className="text-[#2d5a8e]" />
-            <p className="text-sm font-bold">Movimientos MP del día</p>
+          <div className="mb-4 flex items-center gap-2">
+            <Building2 size={16} className="text-[#3d6942]" />
+            <p className="text-sm font-bold">Control Banco</p>
           </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between rounded-xl bg-[#e0ecf8] px-4 py-3">
-              <span className="text-xs font-medium text-[#2d5a8e]">Cierre anterior</span>
-              <span className="text-sm font-bold text-[#2d5a8e]">
-                {n(cierreAnterior) > 0 ? money(n(cierreAnterior)) : '—'}
+
+          {/* Resumen sistema */}
+          <div className="mb-4 space-y-2">
+            <div className="flex items-center justify-between rounded-xl bg-[#f2f8ef] px-4 py-2.5">
+              <span className="text-xs text-[#3d6942]">Cobrado Débito</span>
+              <span className="text-sm font-bold text-[#3d6942]">
+                {money(ingresosPorMetodo.Debito)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-[#f7f2fa] px-4 py-2.5">
+              <span className="text-xs text-[#6b4d8a]">Cobrado Crédito</span>
+              <span className="text-sm font-bold text-[#6b4d8a]">
+                {money(ingresosPorMetodo.Credito)}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-xl bg-[#e5f1e2] px-4 py-3">
-              <span className="text-xs font-medium text-[#3d6942]">+ Ingresos MP</span>
-              <span className="text-sm font-bold text-[#3d6942]">+{money(ingresosMP)}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-xl bg-[#f9ebe6] px-4 py-3">
-              <span className="text-xs font-medium text-[#ba7665]">− Egresos MP</span>
-              <span className="text-sm font-bold text-[#ba7665]">-{money(egresosMP)}</span>
-            </div>
-            <div className="border-t border-dashed border-[#e5eae1]" />
-            <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
-              <span className="text-xs font-semibold text-[#40562a]">Saldo esperado</span>
-              <span className="text-lg font-bold text-[#40562a]">{money(esperado)}</span>
+              <span className="text-xs font-semibold text-[#3d6942]">
+                Total sistema → Banco
+              </span>
+              <span className="text-lg font-bold text-[#3d6942]">{money(cobradoBanco)}</span>
             </div>
           </div>
-        </div>
 
-        {/* ── CIERRE REAL + DIFERENCIA ───────────────────────────────── */}
-        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          <p className="mb-3 text-sm font-bold">Cierre real de hoy</p>
+          {/* Input acreditado real */}
           <AmountField
-            label="Saldo real en MercadoPago"
-            value={cierreHoy}
-            setValue={setCierreHoy}
+            label="Monto real acreditado en banco"
+            value={acreditadoBanco}
+            setValue={setAcreditadoBanco}
           />
 
-          {cierreReal > 0 && (
+          {/* Resultado */}
+          {acreditadoReal > 0 && (
             <>
               {/* Sin diferencia */}
               {diferencia === 0 && (
@@ -391,12 +374,12 @@ export default function ControlMP() {
                   {/* Cálculo visual */}
                   <div className="mt-4 rounded-xl bg-[#f9f9f4] p-4 text-xs text-[#849083]">
                     <div className="flex justify-between">
-                      <span>Saldo esperado</span>
-                      <span className="font-semibold text-[#3c4e3e]">{money(esperado)}</span>
+                      <span>Sistema (Déb + Cred)</span>
+                      <span className="font-semibold text-[#3c4e3e]">{money(cobradoBanco)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Cierre real MP</span>
-                      <span className="font-semibold text-[#3c4e3e]">{money(cierreReal)}</span>
+                      <span>Acreditado real</span>
+                      <span className="font-semibold text-[#3c4e3e]">{money(acreditadoReal)}</span>
                     </div>
                     <div className="mt-1 flex justify-between border-t border-[#e5eae1] pt-1 font-bold">
                       <span>Diferencia</span>
@@ -407,16 +390,16 @@ export default function ControlMP() {
                     </div>
                   </div>
 
-                  {/* Contexto para cruce */}
+                  {/* Contexto de otros métodos */}
                   <div className="mt-3 rounded-xl border border-[#e8d47a] bg-[#fef9e7] p-4">
                     <p className="text-[11px] font-bold text-[#926c00]">
                       💡 Antes de decidir, revisá los otros métodos
                     </p>
                     <div className="mt-2 space-y-1">
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-[#926c00]">Banco (Déb + Cred)</span>
+                        <span className="text-[#926c00]">MP del día</span>
                         <span className="font-semibold text-[#926c00]">
-                          {money(cobradoBanco)}
+                          {money(ingresosPorMetodo.MercadoPago)}
                         </span>
                       </div>
                       <div className="flex justify-between text-[11px]">
@@ -439,43 +422,43 @@ export default function ControlMP() {
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <button
-                        onClick={() => setDecision('ajuste_metodo')}
+                        onClick={() => setDecision('comision')}
                         className={`rounded-xl border-2 p-4 text-left transition ${
-                          decision === 'ajuste_metodo'
-                            ? 'border-[#2d5a8e] bg-[#eff5fb]'
-                            : 'border-[#e5eae1] bg-white hover:border-[#b8d4f0]'
+                          decision === 'comision'
+                            ? 'border-[#40562a] bg-[#edf0e2]'
+                            : 'border-[#e5eae1] bg-white hover:border-[#b9c8b3]'
                         }`}
                       >
-                        <p className="text-sm font-bold">🔄 Error de método</p>
+                        <p className="text-sm font-bold">📊 Comisión banco</p>
                         <p className="mt-1 text-[11px] text-[#849083]">
-                          Una venta fue registrada en otro método. Se anota como reasignación.
+                          Costo real del POSNET. Se registra como gasto operativo.
                         </p>
                       </button>
                       <button
-                        onClick={() => setDecision('diferencia_real')}
+                        onClick={() => setDecision('ajuste')}
                         className={`rounded-xl border-2 p-4 text-left transition ${
-                          decision === 'diferencia_real'
+                          decision === 'ajuste'
                             ? 'border-[#ba4a3a] bg-[#fdf0ee]'
                             : 'border-[#e5eae1] bg-white hover:border-[#f0b9b3]'
                         }`}
                       >
-                        <p className="text-sm font-bold">⚠️ Diferencia real</p>
+                        <p className="text-sm font-bold">⚠️ Ajuste / Error</p>
                         <p className="mt-1 text-[11px] text-[#849083]">
-                          Faltante o sobrante real de dinero en MP.
+                          Diferencia revisada. Se registra en el listado de ajustes.
                         </p>
                       </button>
                     </div>
                   </div>
 
-                  {/* Observación */}
-                  {decision && (
+                  {/* Observación si es ajuste */}
+                  {decision === 'ajuste' && (
                     <div className="mt-3">
                       <textarea
                         value={observacion}
                         onChange={e => setObservacion(e.target.value)}
-                        placeholder="Describí brevemente el motivo (opcional)"
+                        placeholder="Describí brevemente el motivo del ajuste (opcional)"
                         rows={2}
-                        className="w-full resize-none rounded-xl border border-[#e2e8df] bg-white px-3 py-2.5 text-xs outline-none focus:border-[#9ab498]"
+                        className="w-full rounded-xl border border-[#e2e8df] bg-white px-3 py-2.5 text-xs outline-none focus:border-[#9ab498] resize-none"
                       />
                     </div>
                   )}
@@ -489,7 +472,7 @@ export default function ControlMP() {
                   disabled={saving}
                   className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#40562a] py-3 text-sm font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
                 >
-                  {saving ? 'Guardando...' : 'Confirmar control MP'}
+                  {saving ? 'Guardando...' : 'Confirmar control Banco'}
                   <ShieldCheck size={16} />
                 </button>
               )}
@@ -500,11 +483,11 @@ export default function ControlMP() {
                   <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#bdd8b8]">
                     ✓
                   </div>
-                  {diferencia === 0
-                    ? 'Control MP registrado — sin diferencia'
-                    : decision === 'ajuste_metodo'
-                      ? `Reasignación ${money(Math.abs(diferencia))} registrada`
-                      : `Diferencia real ${money(Math.abs(diferencia))} registrada`}
+                  {decision === 'comision'
+                    ? `Comisión ${money(Math.abs(diferencia))} (${porcentaje}%) registrada como gasto operativo`
+                    : decision === 'ajuste'
+                      ? `Ajuste ${money(Math.abs(diferencia))} registrado en listado de diferencias`
+                      : 'Control banco registrado — sin diferencia'}
                 </div>
               )}
             </>

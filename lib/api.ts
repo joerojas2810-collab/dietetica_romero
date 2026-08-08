@@ -6,7 +6,9 @@ import type {
   MetodoPago,
   GastoFijo,
   SaldoApertura,
+  DiferenciaArqueo,
 } from '@/lib/supabase';
+
 // ─── Cliente Supabase Auth (SOLO para autenticación, no para queries) ─────────
 // Usa la anon key porque solo la necesitamos para obtener el JWT del usuario
 // Esta clave con RLS activado no da acceso a los datos
@@ -33,10 +35,7 @@ async function dbRequest<T>(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      // JWT del usuario — expira cada hora, Supabase lo refresca automáticamente
-      // Si alguien lo intercepta, solo vale mientras dure la sesión
       'Authorization': `Bearer ${token}`,
-      // Secreto adicional que evita llamadas directas a /api/db desde afuera
       'x-api-secret': process.env.NEXT_PUBLIC_API_SECRET!,
     },
     body: JSON.stringify({ action, payload }),
@@ -44,7 +43,7 @@ async function dbRequest<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("🔴 ERROR EN API DB:", res.status, err); // ← AGREGÁ ESTO
+    console.error('🔴 ERROR EN API DB:', res.status, err);
     throw new Error(err.error || `Error ${res.status}`);
   }
 
@@ -53,8 +52,7 @@ async function dbRequest<T>(
 
 // ─── API pública ───────────────────────────────────────────────────────────────
 export const db = {
-
-    updateMovimiento: async (
+  updateMovimiento: async (
     id: string,
     row: {
       concepto: string;
@@ -67,7 +65,7 @@ export const db = {
     await dbRequest('updateMovimiento', { id, ...row });
   },
 
-    getReportesData: async (
+  getReportesData: async (
     inicio: string,
     fin: string
   ): Promise<{
@@ -80,6 +78,7 @@ export const db = {
       movimientos: Movimiento[];
       arqueos: ArqueoDiario[];
     }>('getReportesData', { inicio, fin });
+
     return {
       saldos: res.saldos ?? [],
       movimientos: res.movimientos ?? [],
@@ -87,7 +86,7 @@ export const db = {
     };
   },
 
-    getDashboardData: async (
+  getDashboardData: async (
     inicio: string,
     fin: string,
     periodo: string
@@ -101,6 +100,7 @@ export const db = {
       arqueo: ArqueoDiario | null;
       gastosFijos: GastoFijo[];
     }>('getDashboardData', { inicio, fin, periodo });
+
     return {
       movimientos: res.movimientos ?? [],
       arqueo: res.arqueo ?? null,
@@ -110,23 +110,42 @@ export const db = {
 
   getMovimientosMes: async (inicio: string, fin: string): Promise<Movimiento[]> => {
     const { data } = await dbRequest<{ data: Movimiento[] }>(
-      'getMovimientosMes', { inicio, fin }
+      'getMovimientosMes',
+      { inicio, fin }
     );
     return data ?? [];
   },
 
   getMovimientosMesDesc: async (inicio: string, fin: string): Promise<Movimiento[]> => {
     const { data } = await dbRequest<{ data: Movimiento[] }>(
-      'getMovimientosMesDesc', { inicio, fin }
+      'getMovimientosMesDesc',
+      { inicio, fin }
+    );
+    return data ?? [];
+  },
+
+  getMovimientosDia: async (fecha: string, metodo?: MetodoPago): Promise<Movimiento[]> => {
+    const { data } = await dbRequest<{ data: Movimiento[] }>(
+      'getMovimientosDia',
+      { fecha, metodo }
     );
     return data ?? [];
   },
 
   getArqueoMes: async (inicio: string, fin: string): Promise<ArqueoDiario | null> => {
     const { data } = await dbRequest<{ data: ArqueoDiario[] }>(
-      'getArqueoMes', { inicio, fin }
+      'getArqueoMes',
+      { inicio, fin }
     );
     return data?.[0] ?? null;
+  },
+
+  getArqueoDia: async (fecha: string): Promise<ArqueoDiario | null> => {
+    const { data } = await dbRequest<{ data: ArqueoDiario | null }>(
+      'getArqueoDia',
+      { fecha }
+    );
+    return data ?? null;
   },
 
   getArqueoTotal: async (): Promise<number> => {
@@ -136,14 +155,15 @@ export const db = {
     return (data ?? []).reduce((s, r) => s + Number(r.a_caja_fuerte), 0);
   },
 
-  getMovimientosDia: async (fecha: string, metodo?: MetodoPago): Promise<Movimiento[]> => {
-    const { data } = await dbRequest<{ data: Movimiento[] }>(
-      'getMovimientosDia', { fecha, metodo }
+  getArqueosMes: async (inicio: string, fin: string): Promise<ArqueoDiario[]> => {
+    const { data } = await dbRequest<{ data: ArqueoDiario[] }>(
+      'getArqueosMes',
+      { inicio, fin }
     );
     return data ?? [];
   },
 
-    getSaldoApertura: async (periodo: string): Promise<SaldoApertura | null> => {
+  getSaldoApertura: async (periodo: string): Promise<SaldoApertura | null> => {
     const { data } = await dbRequest<{ data: SaldoApertura | null }>(
       'getSaldoApertura',
       { periodo }
@@ -151,17 +171,9 @@ export const db = {
     return data ?? null;
   },
 
-    getSaldosApertura: async (): Promise<SaldoApertura[]> => {
+  getSaldosApertura: async (): Promise<SaldoApertura[]> => {
     const { data } = await dbRequest<{ data: SaldoApertura[] }>(
       'getSaldosApertura'
-    );
-    return data ?? [];
-  },
-
-  getArqueosMes: async (inicio: string, fin: string): Promise<ArqueoDiario[]> => {
-    const { data } = await dbRequest<{ data: ArqueoDiario[] }>(
-      'getArqueosMes',
-      { inicio, fin }
     );
     return data ?? [];
   },
@@ -174,19 +186,24 @@ export const db = {
     await dbRequest('deleteMovimientosDia', { fecha });
   },
 
-  insertMovimientos: async (rows: Omit<Movimiento, 'id' | 'created_at'>[]): Promise<Movimiento[]> => {
+  insertMovimientos: async (
+    rows: Omit<Movimiento, 'id' | 'created_at'>[]
+  ): Promise<Movimiento[]> => {
     if (rows.length === 0) return [];
     const { data } = await dbRequest<{ data: Movimiento[] }>(
-      'insertMovimientos', { rows }
+      'insertMovimientos',
+      { rows }
     );
     return data ?? [];
   },
 
-  upsertArqueo: async (arqueo: Partial<ArqueoDiario> & { fecha: string }): Promise<void> => {
+  upsertArqueo: async (
+    arqueo: Partial<ArqueoDiario> & { fecha: string }
+  ): Promise<void> => {
     await dbRequest('upsertArqueo', arqueo as Record<string, unknown>);
   },
 
-    getGastosFijos: async (periodo: string): Promise<GastoFijo[]> => {
+  getGastosFijos: async (periodo: string): Promise<GastoFijo[]> => {
     const { data } = await dbRequest<{ data: GastoFijo[] }>(
       'getGastosFijos',
       { periodo }
@@ -210,5 +227,27 @@ export const db = {
 
   deleteMovimiento: async (id: string): Promise<void> => {
     await dbRequest('deleteMovimiento', { id });
+  },
+
+  insertDiferencia: async (
+    row: Omit<DiferenciaArqueo, 'id' | 'created_at'>
+  ): Promise<DiferenciaArqueo | null> => {
+    const { data } = await dbRequest<{ data: DiferenciaArqueo[] }>(
+      'insertDiferencia',
+      row as Record<string, unknown>
+    );
+    return data?.[0] ?? null;
+  },
+
+  getDiferenciasMes: async (inicio: string, fin: string): Promise<DiferenciaArqueo[]> => {
+    const { data } = await dbRequest<{ data: DiferenciaArqueo[] }>(
+      'getDiferenciasMes',
+      { inicio, fin }
+    );
+    return data ?? [];
+  },
+
+  deleteDiferencia: async (id: string): Promise<void> => {
+    await dbRequest('deleteDiferencia', { id });
   },
 };

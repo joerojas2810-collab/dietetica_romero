@@ -3,7 +3,7 @@
 // Ahora solo exportamos los tipos TypeScript.
 // Las queries van por /api/db (ver lib/api.ts)
 
-export type MetodoPago = 'Efectivo' | 'Debito' | 'MercadoPago';
+export type MetodoPago = 'Efectivo' | 'Debito' | 'Credito' | 'MercadoPago';
 
 export type CategoriaGasto =
   | 'PERSONAL'
@@ -33,9 +33,13 @@ export interface ArqueoDiario {
   bill_500: number;
   bill_1000: number;
   bill_2000: number;
+  bill_10000: number;
+  bill_20000: number;
   a_caja_fuerte: number;
   disponible_mp?: number | null;
   disponible_debito?: number | null;
+  disponible_banco?: number | null;
+  cierre_caja_chica?: number | null;
   observaciones?: string | null;
   total_contado?: number;
 }
@@ -45,6 +49,9 @@ export interface SaldoApertura {
   efectivo: number;
   debito: number;
   mercadopago: number;
+  banco?: number | null;
+  cartuchera?: number | null;
+  caja_chica?: number | null;
 }
 
 export interface GastoFijo {
@@ -52,4 +59,15 @@ export interface GastoFijo {
   periodo: string;
   concepto: string;
   monto: number;
+}
+
+export interface DiferenciaArqueo {
+  id?: string;
+  fecha: string;
+  metodo: MetodoPago;
+  monto: number;
+  signo: 1 | -1;
+  tipo: string; // pendiente cerrar si queda en 2 tipos o agregamos "comision_banco"
+  observacion?: string | null;
+  created_at?: string;
 }

@@ -1,31 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
+// ─── Cliente Supabase (service key, solo servidor) ────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
+  { auth: { persistSession: false, autoRefreshToken: false } }
 );
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
-
-// ─── Cache de tokens validados (dura 5 minutos) ──────────────────────────────
+// ─── Cache de tokens validados (5 minutos) ────────────────────────────────────
 const tokenCache = new Map<string, { valid: boolean; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+const CACHE_TTL = 5 * 60 * 1000;
 
 async function autenticar(req: NextRequest): Promise<boolean> {
   const apiSecret = req.headers.get('x-api-secret');
@@ -36,24 +21,16 @@ async function autenticar(req: NextRequest): Promise<boolean> {
 
   const token = authHeader.replace('Bearer ', '');
 
-  // Verificar si ya validamos este token recientemente
   const cached = tokenCache.get(token);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.valid;
   }
 
-  // Si no está en caché, validar contra Supabase
-  const {
-    data: { user },
-    error,
-  } = await supabaseAdmin.auth.getUser(token);
-
+  const { data: { user }, error } = await supabase.auth.getUser(token);
   const valid = !error && !!user;
 
-  // Guardar en caché
   tokenCache.set(token, { valid, timestamp: Date.now() });
 
-  // Limpiar tokens viejos cada 100 entradas
   if (tokenCache.size > 100) {
     const now = Date.now();
     tokenCache.forEach((v, k) => {
@@ -64,7 +41,8 @@ async function autenticar(req: NextRequest): Promise<boolean> {
   return valid;
 }
 
-type MetodoPago = 'Efectivo' | 'Debito' | 'MercadoPago';
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+type MetodoPago = 'Efectivo' | 'Debito' | 'Credito' | 'MercadoPago';
 type CategoriaGasto =
   | 'PERSONAL'
   | 'OPERATIVO'
@@ -90,9 +68,13 @@ interface ArqueoUpsert {
   bill_500?: number;
   bill_1000?: number;
   bill_2000?: number;
+  bill_10000?: number;
+  bill_20000?: number;
   a_caja_fuerte?: number;
   disponible_mp?: number;
   disponible_debito?: number;
+  disponible_banco?: number;
+  cierre_caja_chica?: number;
   observaciones?: string | null;
 }
 
@@ -102,101 +84,180 @@ interface GastoFijoInsert {
   monto: number;
 }
 
-export async function POST(req: NextRequest) {
-  const esValido = await autenticar(req);
+interface DiferenciaInsert {
+  fecha: string;
+  metodo: MetodoPago;
+  monto: number;
+  signo: 1 | -1;
+  tipo: 'reasignacion' | 'diferencia_real';
+  observacion?: string | null;
+}
 
-  if (!esValido) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+// ─── Helpers de respuesta ─────────────────────────────────────────────────────
+const ok = (data: unknown) => NextResponse.json(data);
+const err = (msg: string, status = 400) =>
+  NextResponse.json({ error: msg }, { status });
+
+// ─── POST Handler ─────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest) {
+  if (!(await autenticar(req))) {
+    return err('No autorizado', 401);
   }
 
   let body: { action?: unknown; payload?: unknown };
-
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Body inválido' }, { status: 400 });
+    return err('Body inválido');
   }
 
   if (typeof body.action !== 'string') {
-    return NextResponse.json({ error: 'Action inválida' }, { status: 400 });
+    return err('Action inválida');
   }
 
   const action = body.action;
-  const payload = body.payload;
+  const p = (body.payload ?? {}) as Record<string, unknown>;
 
   try {
     switch (action) {
-      case 'getMovimientosMes': {
-        const { inicio, fin } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-        };
+      // ═══════════════════════════════════════════════════════════════════════
+      // MOVIMIENTOS
+      // ═══════════════════════════════════════════════════════════════════════
 
-        if (!inicio || !fin) {
-          return NextResponse.json(
-            { error: 'Faltan inicio o fin' },
-            { status: 400 }
-          );
-        }
+      case 'getMovimientosMes': {
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const { data, error } = await supabase
           .from('movimientos')
           .select('*')
-          .gte('fecha', inicio)
-          .lte('fecha', fin)
+          .gte('fecha', p.inicio)
+          .lte('fecha', p.fin)
           .order('fecha', { ascending: true });
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
       case 'getMovimientosMesDesc': {
-        const { inicio, fin } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-        };
-
-        if (!inicio || !fin) {
-          return NextResponse.json(
-            { error: 'Faltan inicio o fin' },
-            { status: 400 }
-          );
-        }
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const { data, error } = await supabase
           .from('movimientos')
           .select('*')
-          .gte('fecha', inicio)
-          .lte('fecha', fin)
+          .gte('fecha', p.inicio)
+          .lte('fecha', p.fin)
           .order('fecha', { ascending: false });
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
-      case 'getArqueoMes': {
-        const { inicio, fin } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-        };
+      case 'getMovimientosDia': {
+        if (!p.fecha) return err('Falta fecha');
 
-        if (!inicio || !fin) {
-          return NextResponse.json(
-            { error: 'Faltan inicio o fin' },
-            { status: 400 }
-          );
+        let query = supabase
+          .from('movimientos')
+          .select('*')
+          .eq('fecha', p.fecha as string);
+
+        if (p.metodo) {
+          query = query.eq('metodo', p.metodo as string);
         }
+
+        const { data, error } = await query.order('created_at', {
+          ascending: false,
+        });
+
+        if (error) throw error;
+        return ok({ data });
+      }
+
+      case 'deleteMovimientosDia': {
+        if (!p.fecha) return err('Falta fecha');
+
+        const { error } = await supabase
+          .from('movimientos')
+          .delete()
+          .eq('fecha', p.fecha as string);
+
+        if (error) throw error;
+        return ok({ ok: true });
+      }
+
+      case 'insertMovimientos': {
+        const rows = p.rows as MovimientoInsert[] | undefined;
+        if (!rows || rows.length === 0) return ok({ ok: true, data: [] });
+
+        const { data, error } = await supabase
+          .from('movimientos')
+          .insert(rows)
+          .select();
+
+        if (error) throw error;
+        return ok({ data });
+      }
+
+      case 'updateMovimiento': {
+        if (!p.id) return err('Falta id');
+
+        const { data, error } = await supabase
+          .from('movimientos')
+          .update({
+            concepto: p.concepto,
+            entrada: p.entrada,
+            salida: p.salida,
+            metodo: p.metodo,
+            categoria: p.categoria,
+          })
+          .eq('id', p.id as string)
+          .select();
+
+        if (error) throw error;
+        return ok({ data });
+      }
+
+      case 'deleteMovimiento': {
+        if (!p.id) return err('Falta id');
+
+        const { error } = await supabase
+          .from('movimientos')
+          .delete()
+          .eq('id', p.id as string);
+
+        if (error) throw error;
+        return ok({ ok: true });
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // ARQUEO DIARIO
+      // ═══════════════════════════════════════════════════════════════════════
+
+      case 'getArqueoMes': {
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const { data, error } = await supabase
           .from('arqueo_diario')
           .select('*')
-          .gte('fecha', inicio)
-          .lte('fecha', fin)
+          .gte('fecha', p.inicio)
+          .lte('fecha', p.fin)
           .order('fecha', { ascending: false })
           .limit(1);
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
+      }
+
+      case 'getArqueoDia': {
+        if (!p.fecha) return err('Falta fecha');
+
+        const { data, error } = await supabase
+          .from('arqueo_diario')
+          .select('*')
+          .eq('fecha', p.fecha as string)
+          .limit(1);
+
+        if (error) throw error;
+        return ok({ data: data?.[0] ?? null });
       }
 
       case 'getArqueoTotal': {
@@ -205,80 +266,26 @@ export async function POST(req: NextRequest) {
           .select('a_caja_fuerte');
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
-      case 'getMovimientosDia': {
-        const { fecha, metodo } = (payload ?? {}) as {
-          fecha: string;
-          metodo?: MetodoPago;
-        };
-
-        if (!fecha) {
-          return NextResponse.json(
-            { error: 'Falta fecha' },
-            { status: 400 }
-          );
-        }
-
-        let query = supabase.from('movimientos').select('*').eq('fecha', fecha);
-
-        if (metodo) {
-          query = query.eq('metodo', metodo);
-        }
-
-        const { data, error } = await query.order('created_at', {
-          ascending: false,
-        });
-
-        if (error) throw error;
-        return NextResponse.json({ data });
-      }
-
-      case 'deleteMovimientosDia': {
-        const { fecha } = (payload ?? {}) as { fecha: string };
-
-        if (!fecha) {
-          return NextResponse.json(
-            { error: 'Falta fecha' },
-            { status: 400 }
-          );
-        }
-
-        const { error } = await supabase
-          .from('movimientos')
-          .delete()
-          .eq('fecha', fecha);
-
-        if (error) throw error;
-        return NextResponse.json({ ok: true });
-      }
-
-      case 'insertMovimientos': {
-        const { rows } = (payload ?? {}) as { rows: MovimientoInsert[] };
-
-        if (!rows || rows.length === 0) {
-          return NextResponse.json({ ok: true, data: [] });
-        }
+      case 'getArqueosMes': {
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const { data, error } = await supabase
-          .from('movimientos')
-          .insert(rows)
-          .select();
+          .from('arqueo_diario')
+          .select('*')
+          .gte('fecha', p.inicio)
+          .lte('fecha', p.fin)
+          .order('fecha', { ascending: false });
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
       case 'upsertArqueo': {
-        const arqueo = (payload ?? null) as ArqueoUpsert | null;
-
-        if (!arqueo?.fecha || typeof arqueo.fecha !== 'string') {
-          return NextResponse.json(
-            { error: 'Payload inválido: falta fecha en arqueo' },
-            { status: 400 }
-          );
-        }
+        const arqueo = p as unknown as ArqueoUpsert;
+        if (!arqueo?.fecha) return err('Falta fecha en arqueo');
 
         const { data, error } = await supabase
           .from('arqueo_diario')
@@ -286,53 +293,69 @@ export async function POST(req: NextRequest) {
           .select();
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
-      case 'deleteMovimiento': {
-        const { id } = (payload ?? {}) as { id: string };
+      // ═══════════════════════════════════════════════════════════════════════
+      // SALDOS APERTURA
+      // ═══════════════════════════════════════════════════════════════════════
 
-        if (!id) {
-          return NextResponse.json({ error: 'Falta id' }, { status: 400 });
-        }
+      case 'getSaldoApertura': {
+        if (!p.periodo) return err('Falta periodo');
 
-        const { error } = await supabase
-          .from('movimientos')
-          .delete()
-          .eq('id', id);
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .select('*')
+          .eq('periodo', p.periodo as string)
+          .limit(1);
 
         if (error) throw error;
-        return NextResponse.json({ ok: true });
+        return ok({ data: data?.[0] ?? null });
       }
 
-              case 'getGastosFijos': {
-        const { periodo } = (payload ?? {}) as { periodo: string };
+      case 'getSaldosApertura': {
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .select('*')
+          .order('periodo', { ascending: false });
 
-        if (!periodo) {
-          return NextResponse.json(
-            { error: 'Falta periodo' },
-            { status: 400 }
-          );
-        }
+        if (error) throw error;
+        return ok({ data });
+      }
+
+      case 'upsertSaldoApertura': {
+        if (!p.periodo) return err('Falta periodo');
+
+        const { data, error } = await supabase
+          .from('saldos_apertura')
+          .upsert(p, { onConflict: 'periodo' })
+          .select();
+
+        if (error) throw error;
+        return ok({ data });
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // GASTOS FIJOS
+      // ═══════════════════════════════════════════════════════════════════════
+
+      case 'getGastosFijos': {
+        if (!p.periodo) return err('Falta periodo');
 
         const { data, error } = await supabase
           .from('gastos_fijos')
           .select('*')
-          .eq('periodo', periodo)
+          .eq('periodo', p.periodo as string)
           .order('concepto', { ascending: true });
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
       case 'insertGastoFijo': {
-        const row = (payload ?? null) as GastoFijoInsert | null;
-
+        const row = p as unknown as GastoFijoInsert;
         if (!row?.periodo || !row?.concepto || !row?.monto) {
-          return NextResponse.json(
-            { error: 'Payload inválido para gasto fijo' },
-            { status: 400 }
-          );
+          return err('Payload inválido para gasto fijo');
         }
 
         const { data, error } = await supabase
@@ -345,129 +368,100 @@ export async function POST(req: NextRequest) {
           .select();
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
       case 'deleteGastoFijo': {
-        const { id } = (payload ?? {}) as { id: string };
-
-        if (!id) {
-          return NextResponse.json(
-            { error: 'Falta id' },
-            { status: 400 }
-          );
-        }
+        if (!p.id) return err('Falta id');
 
         const { error } = await supabase
           .from('gastos_fijos')
           .delete()
-          .eq('id', id);
+          .eq('id', p.id as string);
 
         if (error) throw error;
-        return NextResponse.json({ ok: true });
+        return ok({ ok: true });
       }
 
-            case 'getSaldoApertura': {
-        const { periodo } = (payload ?? {}) as { periodo: string };
+      // ═══════════════════════════════════════════════════════════════════════
+      // DIFERENCIAS ARQUEO
+      // ═══════════════════════════════════════════════════════════════════════
 
-        if (!periodo) {
-          return NextResponse.json({ error: 'Falta periodo' }, { status: 400 });
+      case 'insertDiferencia': {
+        const row = p as unknown as DiferenciaInsert;
+        if (!row?.fecha || !row?.metodo || !row?.monto || !row?.signo || !row?.tipo) {
+          return err('Payload inválido para diferencia');
         }
 
         const { data, error } = await supabase
-          .from('saldos_apertura')
-          .select('*')
-          .eq('periodo', periodo)
-          .limit(1);
-
-        if (error) throw error;
-        return NextResponse.json({ data: data?.[0] ?? null });
-      }
-
-      case 'upsertSaldoApertura': {
-        const row = (payload ?? null) as {
-          periodo: string;
-          efectivo: number;
-          debito: number;
-          mercadopago: number;
-        } | null;
-
-        if (!row?.periodo) {
-          return NextResponse.json({ error: 'Falta periodo' }, { status: 400 });
-        }
-
-        const { data, error } = await supabase
-          .from('saldos_apertura')
-          .upsert(row, { onConflict: 'periodo' })
+          .from('diferencias_arqueo')
+          .insert({
+            fecha: row.fecha,
+            metodo: row.metodo,
+            monto: row.monto,
+            signo: row.signo,
+            tipo: row.tipo,
+            observacion: row.observacion ?? null,
+          })
           .select();
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
-            case 'getSaldosApertura': {
-        const { data, error } = await supabase
-          .from('saldos_apertura')
-          .select('*')
-          .order('periodo', { ascending: false });
-
-        if (error) throw error;
-        return NextResponse.json({ data });
-      }
-
-      case 'getArqueosMes': {
-        const { inicio, fin } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-        };
-
-        if (!inicio || !fin) {
-          return NextResponse.json({ error: 'Faltan inicio o fin' }, { status: 400 });
-      }
+      case 'getDiferenciasMes': {
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const { data, error } = await supabase
-          .from('arqueo_diario')
+          .from('diferencias_arqueo')
           .select('*')
-          .gte('fecha', inicio)
-          .lte('fecha', fin)
+          .gte('fecha', p.inicio)
+          .lte('fecha', p.fin)
           .order('fecha', { ascending: false });
 
         if (error) throw error;
-        return NextResponse.json({ data });
+        return ok({ data });
       }
 
-            case 'getDashboardData': {
-        const { inicio, fin, periodo } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-          periodo: string;
-        };
+      case 'deleteDiferencia': {
+        if (!p.id) return err('Falta id');
 
-        if (!inicio || !fin || !periodo) {
-          return NextResponse.json(
-            { error: 'Faltan inicio, fin o periodo' },
-            { status: 400 }
-          );
+        const { error } = await supabase
+          .from('diferencias_arqueo')
+          .delete()
+          .eq('id', p.id as string);
+
+        if (error) throw error;
+        return ok({ ok: true });
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // CONSULTAS UNIFICADAS
+      // ═══════════════════════════════════════════════════════════════════════
+
+      case 'getDashboardData': {
+        if (!p.inicio || !p.fin || !p.periodo) {
+          return err('Faltan inicio, fin o periodo');
         }
 
         const [movsRes, arqRes, gfRes] = await Promise.all([
           supabase
             .from('movimientos')
             .select('*')
-            .gte('fecha', inicio)
-            .lte('fecha', fin)
+            .gte('fecha', p.inicio)
+            .lte('fecha', p.fin)
             .order('fecha', { ascending: true }),
           supabase
             .from('arqueo_diario')
             .select('*')
-            .gte('fecha', inicio)
-            .lte('fecha', fin)
+            .gte('fecha', p.inicio)
+            .lte('fecha', p.fin)
             .order('fecha', { ascending: false })
             .limit(1),
           supabase
             .from('gastos_fijos')
             .select('*')
-            .eq('periodo', periodo)
+            .eq('periodo', p.periodo as string)
             .order('concepto', { ascending: true }),
         ]);
 
@@ -475,25 +469,15 @@ export async function POST(req: NextRequest) {
         if (arqRes.error) throw arqRes.error;
         if (gfRes.error) throw gfRes.error;
 
-        return NextResponse.json({
+        return ok({
           movimientos: movsRes.data,
           arqueo: arqRes.data?.[0] ?? null,
           gastosFijos: gfRes.data,
         });
       }
 
-            case 'getReportesData': {
-        const { inicio, fin } = (payload ?? {}) as {
-          inicio: string;
-          fin: string;
-        };
-
-        if (!inicio || !fin) {
-          return NextResponse.json(
-            { error: 'Faltan inicio o fin' },
-            { status: 400 }
-          );
-        }
+      case 'getReportesData': {
+        if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
         const [saldosRes, movsRes, arqueosRes] = await Promise.all([
           supabase
@@ -503,14 +487,14 @@ export async function POST(req: NextRequest) {
           supabase
             .from('movimientos')
             .select('*')
-            .gte('fecha', inicio)
-            .lte('fecha', fin)
+            .gte('fecha', p.inicio)
+            .lte('fecha', p.fin)
             .order('fecha', { ascending: true }),
           supabase
             .from('arqueo_diario')
             .select('*')
-            .gte('fecha', inicio)
-            .lte('fecha', fin)
+            .gte('fecha', p.inicio)
+            .lte('fecha', p.fin)
             .order('fecha', { ascending: false }),
         ]);
 
@@ -518,49 +502,20 @@ export async function POST(req: NextRequest) {
         if (movsRes.error) throw movsRes.error;
         if (arqueosRes.error) throw arqueosRes.error;
 
-        return NextResponse.json({
+        return ok({
           saldos: saldosRes.data,
           movimientos: movsRes.data,
           arqueos: arqueosRes.data,
         });
       }
 
-            case 'updateMovimiento': {
-        const { id, concepto, entrada, salida, metodo, categoria } =
-          (payload ?? {}) as {
-            id: string;
-            concepto: string;
-            entrada: number;
-            salida: number;
-            metodo: string;
-            categoria?: string | null;
-          };
-
-        if (!id) {
-          return NextResponse.json({ error: 'Falta id' }, { status: 400 });
-        }
-
-        const { data, error } = await supabase
-          .from('movimientos')
-          .update({ concepto, entrada, salida, metodo, categoria })
-          .eq('id', id)
-          .select();
-
-        if (error) throw error;
-        return NextResponse.json({ data });
-      }
+      // ═══════════════════════════════════════════════════════════════════════
 
       default:
-        return NextResponse.json(
-          { error: `Action desconocida: ${action}` },
-          { status: 400 }
-        );
+        return err(`Action desconocida: ${action}`);
     }
-  } catch (err) {
-    console.error(`[api/db] Error en action "${action}":`, err);
-    return NextResponse.json(
-      { error: 'Error interno del servidor' },
-      { status: 500 }
-    );
+  } catch (e) {
+    console.error(`[api/db] Error en action "${action}":`, e);
+    return err('Error interno del servidor', 500);
   }
 }

@@ -6,51 +6,41 @@ import { useEffect, useState } from 'react';
 import {
   BarChart3, CalendarDays, ChevronDown, CirclePlus,
   ClipboardList, Cloud, Menu, PiggyBank,
-  Settings2, ShieldCheck, X,
+  Settings2, ShieldCheck, X, Building2,
 } from 'lucide-react';
 import { supabaseAuth } from '@/lib/api';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import NavItem from '@/components/shared/NavItem';
-import CreditCardIcon from '@/components/shared/CreditCardIcon';
 
 const Dashboard = dynamic(() => import('@/components/views/Dashboard'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const DayForm = dynamic(() => import('@/components/views/DayForm'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const Movements = dynamic(() => import('@/components/views/Movements'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const Cartuchera = dynamic(() => import('@/components/views/Cartuchera'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const ControlMP = dynamic(() => import('@/components/views/ControlMP'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
-const ControlDebito = dynamic(() => import('@/components/views/ControlDebito'), {
+const ControlBanco = dynamic(() => import('@/components/views/ControlBanco'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const PagosIndividuales = dynamic(() => import('@/components/views/PagosIndividuales'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const Configuracion = dynamic(() => import('@/components/views/Configuracion'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const CierreMes = dynamic(() => import('@/components/views/CierreMes'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
-
 const Reportes = dynamic(() => import('@/components/views/Reportes'), {
   loading: () => <div className="text-sm text-[#849083]">Cargando...</div>,
 });
@@ -61,23 +51,23 @@ type View =
   | 'movements'
   | 'cartuchera'
   | 'controlmp'
-  | 'controldebito'
+  | 'controlbanco'
   | 'pagos'
   | 'config'
   | 'cierre'
   | 'reportes';
 
 const viewTitles: Record<View, string> = {
-  dashboard: 'Resumen del negocio',
-  day: 'Carga del día',
-  movements: 'Movimientos',
-  cartuchera: 'Control de cartuchera',
-  controlmp: 'Control MercadoPago',
-  controldebito: 'Control Débito',
-  pagos: 'Pagos individuales',
-  config: 'Configuración',
-  cierre: 'Cierre de mes',
-  reportes: 'Reportes',
+  dashboard:    'Resumen del negocio',
+  day:          'Carga del día',
+  movements:    'Movimientos',
+  cartuchera:   'Control de cartuchera',
+  controlmp:    'Control MercadoPago',
+  controlbanco: 'Control Banco',
+  pagos:        'Pagos individuales',
+  config:       'Configuración',
+  cierre:       'Cierre de mes',
+  reportes:     'Reportes',
 };
 
 export default function Home() {
@@ -95,9 +85,7 @@ export default function Home() {
     });
 
     const { data: { subscription } } = supabaseAuth.auth.onAuthStateChange(
-      (_event, session) => {
-        setAuthenticated(!!session);
-      }
+      (_event, session) => setAuthenticated(!!session)
     );
 
     return () => subscription.unsubscribe();
@@ -119,30 +107,28 @@ export default function Home() {
     setMobileOpen(false);
   };
 
-  if (checkingAuth) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f6f7f2]">
-        <div className="text-sm text-[#849083]">Cargando...</div>
-      </div>
-    );
-  }
+  if (checkingAuth) return (
+    <div className="flex min-h-screen items-center justify-center bg-[#f6f7f2]">
+      <div className="text-sm text-[#849083]">Cargando...</div>
+    </div>
+  );
 
-  if (!authenticated) {
-    return <Login onLogin={() => setAuthenticated(true)} />;
-  }
+  if (!authenticated) return <Login onLogin={() => setAuthenticated(true)} />;
 
   return (
     <main className="min-h-screen bg-[#f6f7f2] text-[#243126]">
       {/* Sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-[#e5e9df] bg-[#fbfcf8] px-5 py-6 transition-transform duration-300 lg:translate-x-0 overflow-y-auto ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-[#e5e9df] bg-[#fbfcf8] px-5 py-6 transition-transform duration-300 lg:translate-x-0 overflow-y-auto ${
+        mobileOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
         <div className="mb-10 flex items-center justify-between px-2">
           <button onClick={() => nav('dashboard')} className="text-left">
             <div className="relative h-[82px] w-[188px] overflow-hidden rounded-2xl bg-[#fdfdf9]">
-              <img src="/IMG_7336.jpg" alt="Dietética Romero" className="h-full w-full object-cover object-center" />
+              <img
+                src="/IMG_7336.jpg"
+                alt="Dietética Romero"
+                className="h-full w-full object-cover object-center"
+              />
             </div>
           </button>
           <button className="lg:hidden" onClick={() => setMobileOpen(false)}>
@@ -154,23 +140,79 @@ export default function Home() {
           Operación
         </p>
         <nav className="space-y-1">
-          <NavItem active={view === 'dashboard'} icon={<BarChart3 size={18} />} label="Dashboard" onClick={() => nav('dashboard')} />
-          <NavItem active={view === 'day'} icon={<CalendarDays size={18} />} label="Carga del día" badge="Hoy" onClick={() => nav('day')} />
-          <NavItem active={view === 'movements'} icon={<ClipboardList size={18} />} label="Movimientos" onClick={() => nav('movements')} />
+          <NavItem
+            active={view === 'dashboard'}
+            icon={<BarChart3 size={18} />}
+            label="Dashboard"
+            onClick={() => nav('dashboard')}
+          />
+          <NavItem
+            active={view === 'day'}
+            icon={<CalendarDays size={18} />}
+            label="Carga del día"
+            badge="Hoy"
+            onClick={() => nav('day')}
+          />
+          <NavItem
+            active={view === 'movements'}
+            icon={<ClipboardList size={18} />}
+            label="Movimientos"
+            onClick={() => nav('movements')}
+          />
         </nav>
 
-        <NavItem active={view === 'cartuchera'} icon={<ShieldCheck size={18} />} label="Cartuchera" onClick={() => nav('cartuchera')} />
-        <NavItem active={view === 'controlmp'} icon={<Cloud size={18} />} label="Control MP" onClick={() => nav('controlmp')} />
-        <NavItem active={view === 'controldebito'} icon={<CreditCardIcon />} label="Control Débito" onClick={() => nav('controldebito')} />
-        <NavItem active={view === 'pagos'} icon={<CirclePlus size={18} />} label="Pagos individuales" onClick={() => nav('pagos')} />
+        <p className="mb-3 mt-6 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
+          Arqueos
+        </p>
+        <nav className="space-y-1">
+          <NavItem
+            active={view === 'cartuchera'}
+            icon={<ShieldCheck size={18} />}
+            label="Cartuchera"
+            onClick={() => nav('cartuchera')}
+          />
+          <NavItem
+            active={view === 'controlmp'}
+            icon={<Cloud size={18} />}
+            label="Control MP"
+            onClick={() => nav('controlmp')}
+          />
+          <NavItem
+            active={view === 'controlbanco'}
+            icon={<Building2 size={18} />}
+            label="Control Banco"
+            onClick={() => nav('controlbanco')}
+          />
+          <NavItem
+            active={view === 'pagos'}
+            icon={<CirclePlus size={18} />}
+            label="Pagos individuales"
+            onClick={() => nav('pagos')}
+          />
+        </nav>
 
-        <p className="mb-3 mt-9 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
+        <p className="mb-3 mt-6 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
           Administración
         </p>
         <nav className="space-y-1">
-          <NavItem active={view === 'cierre'} icon={<PiggyBank size={18} />} label="Cierre de mes" onClick={() => nav('cierre')} />
-          <NavItem active={view === 'config'} icon={<Settings2 size={18} />} label="Configuración" onClick={() => nav('config')} />
-          <NavItem active={view === 'reportes'} icon={<BarChart3 size={18} />} label="Reportes" onClick={() => nav('reportes')} />
+          <NavItem
+            active={view === 'cierre'}
+            icon={<PiggyBank size={18} />}
+            label="Cierre de mes"
+            onClick={() => nav('cierre')}
+          />
+          <NavItem
+            active={view === 'config'}
+            icon={<Settings2 size={18} />}
+            label="Configuración"
+            onClick={() => nav('config')}
+          />
+          <NavItem
+            active={view === 'reportes'}
+            icon={<BarChart3 size={18} />}
+            label="Reportes"
+            onClick={() => nav('reportes')}
+          />
         </nav>
 
         <div className="mt-auto rounded-2xl bg-[#eef3e8] p-4">
@@ -187,7 +229,7 @@ export default function Home() {
           onClick={handleLogout}
           className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-[#e4e9de] bg-white p-3 transition hover:bg-[#fdf0ee]"
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#e9e3f3] font-bold text-sm text-[#4a5b2c]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#e9e3f3] text-sm font-bold text-[#4a5b2c]">
             DR
           </div>
           <div className="text-left">
@@ -223,16 +265,16 @@ export default function Home() {
         </header>
 
         <section className="mx-auto max-w-[1440px] px-5 py-7 sm:px-8 lg:px-12 lg:py-10">
-          {view === 'dashboard' && <Dashboard />}
-          {view === 'day' && <DayForm onSave={toast} />}
-          {view === 'movements' && <Movements />}
-          {view === 'cartuchera' && <Cartuchera />}
-          {view === 'controlmp' && <ControlMP />}
-          {view === 'controldebito' && <ControlDebito />}
-          {view === 'pagos' && <PagosIndividuales />}
-          {view === 'config' && <Configuracion />}
-          {view === 'cierre' && <CierreMes />}
-          {view === 'reportes' && <Reportes />}
+          {view === 'dashboard'    && <Dashboard />}
+          {view === 'day'          && <DayForm onSave={toast} />}
+          {view === 'movements'    && <Movements />}
+          {view === 'cartuchera'   && <Cartuchera />}
+          {view === 'controlmp'    && <ControlMP />}
+          {view === 'controlbanco' && <ControlBanco />}
+          {view === 'pagos'        && <PagosIndividuales />}
+          {view === 'config'       && <Configuracion />}
+          {view === 'cierre'       && <CierreMes />}
+          {view === 'reportes'     && <Reportes />}
         </section>
       </div>
 
