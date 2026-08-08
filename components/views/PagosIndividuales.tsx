@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, CirclePlus, Trash2 } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, CirclePlus, Pencil, Trash2 } from 'lucide-react';
 import EditMovimientoModal from '@/components/shared/EditMovimientoModal';
 import { Movimiento, MetodoPago, CategoriaGasto } from '@/lib/supabase';
 import { db } from '@/lib/api';
