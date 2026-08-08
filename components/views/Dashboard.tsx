@@ -9,7 +9,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
   Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { Movimiento, ArqueoDiario, GastoFijo } from '@/lib/supabase';
+import { Movimiento, ArqueoDiario, GastoFijo, SaldoApertura } from '@/lib/supabase';
 import { db } from '@/lib/api';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [arqueo, setArqueo] = useState<ArqueoDiario | null>(null);
   const [gastosFijos, setGastosFijos] = useState<GastoFijo[]>([]);
+  const [apertura, setApertura] = useState<SaldoApertura | null>(null);
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
 
@@ -33,34 +34,47 @@ export default function Dashboard() {
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      const { movimientos: movs, arqueo: arq, gastosFijos: gf } =
-        await db.getDashboardData(inicio, fin, inicio);
+      // Traemos todo en paralelo: datos del dashboard + la apertura de este mes
+      const [{ movimientos: movs, arqueo: arq, gastosFijos: gf }, ap] = await Promise.all([
+        db.getDashboardData(inicio, fin, inicio),
+        db.getSaldoApertura(inicio)
+      ]);
 
       setMovimientos(movs);
       setArqueo(arq);
       setGastosFijos(gf);
+      setApertura(ap);
       setLoading(false);
     };
     fetchData();
   }, [mes]);
 
-  // ── Saldos por cuenta real ────────────────────────────────────────
-  const saldoEfectivo = movimientos
+  // ── APERTURAS ─────────────────────────────────────────────────────
+  const apEfectivo = Number(apertura?.caja_chica ?? apertura?.efectivo ?? 0);
+  const apBanco = Number(apertura?.banco ?? apertura?.debito ?? 0);
+  const apMP = Number(apertura?.mercadopago ?? 0);
+
+  // ── MOVIMIENTOS NETOS DEL MES ─────────────────────────────────────
+  const movEfectivo = movimientos
     .filter(m => m.metodo === 'Efectivo')
     .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
 
-  // Banco = Débito + Crédito
-  const saldoBanco = movimientos
+  const movBanco = movimientos
     .filter(m => m.metodo === 'Debito' || m.metodo === 'Credito')
     .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
 
-  const saldoMP = movimientos
+  const movMP = movimientos
     .filter(m => m.metodo === 'MercadoPago')
     .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
 
   const totalEntradas = movimientos.reduce((s, m) => s + Number(m.entrada), 0);
   const totalSalidas = movimientos.reduce((s, m) => s + Number(m.salida), 0);
   const resultado = totalEntradas - totalSalidas;
+
+  // ── SALDOS REALES (Apertura + Movimientos) ────────────────────────
+  const saldoEfectivo = apEfectivo + movEfectivo;
+  const saldoBanco = apBanco + movBanco;
+  const saldoMP = apMP + movMP;
   const saldoTotal = saldoEfectivo + saldoBanco + saldoMP;
 
   // ── Gráficos ──────────────────────────────────────────────────────
@@ -72,7 +86,7 @@ export default function Dashboard() {
     return Object.entries(mapa).map(([fecha, value]) => ({
       day: format(parseISO(fecha), 'd'),
       value,
-    }));
+    })).sort((a, b) => Number(a.day) - Number(b.day));
   }, [movimientos]);
 
   const diasAbiertos = ventasPorDia.filter(d => d.value > 0).length;
@@ -94,7 +108,7 @@ export default function Dashboard() {
     });
     return Object.entries(mapa).map(([name, value]) => ({
       name, value, color: colores[name] || '#888',
-    }));
+    })).sort((a, b) => b.value - a.value);
   }, [movimientos]);
 
   // ── Meta diaria ───────────────────────────────────────────────────
@@ -103,13 +117,13 @@ export default function Dashboard() {
   const brechaVsMeta = promedioDiario - metaDiaria;
 
   // ── Diferencias del arqueo ────────────────────────────────────────
+  // OJO: Estas diferencias comparan el último arqueo físico contra el saldo mensual total actual.
   // Banco: usa disponible_banco si existe, sino disponible_debito (legacy)
   const disponibleBanco = arqueo
     ? Number(arqueo.disponible_banco ?? arqueo.disponible_debito ?? 0)
     : null;
   const difBanco = disponibleBanco !== null ? disponibleBanco - saldoBanco : null;
   const difMP = arqueo ? (Number(arqueo.disponible_mp) || 0) - saldoMP : null;
-  // Efectivo: total_contado (caja chica) vs saldo efectivo
   const difEfectivo = arqueo
     ? (Number(arqueo.total_contado) || 0) - saldoEfectivo
     : null;
@@ -153,7 +167,7 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {/* ── KPIs principales ────────────────────────────────────────── */}
+      {/* ── KPIs principales (Saldos reales) ───────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Saldo total"
