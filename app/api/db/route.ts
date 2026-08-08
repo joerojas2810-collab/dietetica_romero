@@ -436,6 +436,95 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ data });
       }
 
+            case 'getDashboardData': {
+        const { inicio, fin, periodo } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+          periodo: string;
+        };
+
+        if (!inicio || !fin || !periodo) {
+          return NextResponse.json(
+            { error: 'Faltan inicio, fin o periodo' },
+            { status: 400 }
+          );
+        }
+
+        const [movsRes, arqRes, gfRes] = await Promise.all([
+          supabase
+            .from('movimientos')
+            .select('*')
+            .gte('fecha', inicio)
+            .lte('fecha', fin)
+            .order('fecha', { ascending: true }),
+          supabase
+            .from('arqueo_diario')
+            .select('*')
+            .gte('fecha', inicio)
+            .lte('fecha', fin)
+            .order('fecha', { ascending: false })
+            .limit(1),
+          supabase
+            .from('gastos_fijos')
+            .select('*')
+            .eq('periodo', periodo)
+            .order('concepto', { ascending: true }),
+        ]);
+
+        if (movsRes.error) throw movsRes.error;
+        if (arqRes.error) throw arqRes.error;
+        if (gfRes.error) throw gfRes.error;
+
+        return NextResponse.json({
+          movimientos: movsRes.data,
+          arqueo: arqRes.data?.[0] ?? null,
+          gastosFijos: gfRes.data,
+        });
+      }
+
+            case 'getReportesData': {
+        const { inicio, fin } = (payload ?? {}) as {
+          inicio: string;
+          fin: string;
+        };
+
+        if (!inicio || !fin) {
+          return NextResponse.json(
+            { error: 'Faltan inicio o fin' },
+            { status: 400 }
+          );
+        }
+
+        const [saldosRes, movsRes, arqueosRes] = await Promise.all([
+          supabase
+            .from('saldos_apertura')
+            .select('*')
+            .order('periodo', { ascending: false }),
+          supabase
+            .from('movimientos')
+            .select('*')
+            .gte('fecha', inicio)
+            .lte('fecha', fin)
+            .order('fecha', { ascending: true }),
+          supabase
+            .from('arqueo_diario')
+            .select('*')
+            .gte('fecha', inicio)
+            .lte('fecha', fin)
+            .order('fecha', { ascending: false }),
+        ]);
+
+        if (saldosRes.error) throw saldosRes.error;
+        if (movsRes.error) throw movsRes.error;
+        if (arqueosRes.error) throw arqueosRes.error;
+
+        return NextResponse.json({
+          saldos: saldosRes.data,
+          movimientos: movsRes.data,
+          arqueos: arqueosRes.data,
+        });
+      }
+
       default:
         return NextResponse.json(
           { error: `Action desconocida: ${action}` },

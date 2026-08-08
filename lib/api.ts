@@ -54,6 +54,47 @@ async function dbRequest<T>(
 // ─── API pública ───────────────────────────────────────────────────────────────
 export const db = {
 
+    getReportesData: async (
+    inicio: string,
+    fin: string
+  ): Promise<{
+    saldos: SaldoApertura[];
+    movimientos: Movimiento[];
+    arqueos: ArqueoDiario[];
+  }> => {
+    const res = await dbRequest<{
+      saldos: SaldoApertura[];
+      movimientos: Movimiento[];
+      arqueos: ArqueoDiario[];
+    }>('getReportesData', { inicio, fin });
+    return {
+      saldos: res.saldos ?? [],
+      movimientos: res.movimientos ?? [],
+      arqueos: res.arqueos ?? [],
+    };
+  },
+
+    getDashboardData: async (
+    inicio: string,
+    fin: string,
+    periodo: string
+  ): Promise<{
+    movimientos: Movimiento[];
+    arqueo: ArqueoDiario | null;
+    gastosFijos: GastoFijo[];
+  }> => {
+    const res = await dbRequest<{
+      movimientos: Movimiento[];
+      arqueo: ArqueoDiario | null;
+      gastosFijos: GastoFijo[];
+    }>('getDashboardData', { inicio, fin, periodo });
+    return {
+      movimientos: res.movimientos ?? [],
+      arqueo: res.arqueo ?? null,
+      gastosFijos: res.gastosFijos ?? [],
+    };
+  },
+
   getMovimientosMes: async (inicio: string, fin: string): Promise<Movimiento[]> => {
     const { data } = await dbRequest<{ data: Movimiento[] }>(
       'getMovimientosMes', { inicio, fin }

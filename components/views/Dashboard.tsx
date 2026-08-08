@@ -28,17 +28,14 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
 
-  useEffect(() => {
+    useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      const [movs, arq, gf] = await Promise.all([
-        db.getMovimientosMes(inicio, fin),
-        db.getArqueoMes(inicio, fin),
-        db.getGastosFijos(inicio),
-      ]);
+      const { movimientos: movs, arqueo: arq, gastosFijos: gf } =
+        await db.getDashboardData(inicio, fin, inicio);
 
       setMovimientos(movs);
       setArqueo(arq);
