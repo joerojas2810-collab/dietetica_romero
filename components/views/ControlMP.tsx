@@ -80,10 +80,16 @@ export default function ControlMP() {
   const [decision, setDecision] = useState<DecisionMP>(null);
   const [observacion, setObservacion] = useState('');
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [editing, setEditing] = useState<Movimiento | null>(null);
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
+  const toAmountString = (v: number | string | null | undefined) => {
+  if (v === null || v === undefined) return '';
+  const num = Number(v);
+  return Number.isFinite(num) ? String(num) : '';
+};
 
   const ingresosMP = ingresosPorMetodo.MercadoPago;
   const esperado = n(cierreAnterior) + ingresosMP - egresosMP;
@@ -94,16 +100,23 @@ export default function ControlMP() {
     ? ((Math.abs(diferencia) / esperado) * 100).toFixed(2)
     : '0';
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async ({ preserveNotice = false }: { preserveNotice?: boolean } = {}) => {
+  setLoading(true);
 
-    const results: Record<Metodo, Movimiento[]> = {
-      Debito: [], Credito: [], MercadoPago: [], Efectivo: [],
-    };
-    const ingresos: Record<Metodo, number> = {
-      Debito: 0, Credito: 0, MercadoPago: 0, Efectivo: 0,
-    };
+  if (!preserveNotice) {
+    setSaveMessage('');
+    setSaveError('');
+  }
 
+  const results: Record<Metodo, Movimiento[]> = {
+    Debito: [], Credito: [], MercadoPago: [], Efectivo: [],
+  };
+
+  const ingresos: Record<Metodo, number> = {
+    Debito: 0, Credito: 0, MercadoPago: 0, Efectivo: 0,
+  };
+
+  try {
     await Promise.all(
       METODOS.map(async (metodo) => {
         const movs = await db.getMovimientosDia(fecha, metodo);
@@ -112,30 +125,55 @@ export default function ControlMP() {
       })
     );
 
+    const [arqueoHoy, arqueosHistoricos] = await Promise.all([
+      db.getArqueoDia(fecha),
+      db.getArqueosMes('2000-01-01', fecha),
+    ]);
+
     const egMP = results.MercadoPago.reduce((s, m) => s + Number(m.salida), 0);
+
+    const ultimoMPPrevio = arqueosHistoricos
+      .filter(a => a.fecha < fecha && a.disponible_mp != null)
+      .sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
 
     setMovsPorMetodo(results);
     setIngresosPorMetodo(ingresos);
     setEgresosMP(egMP);
-    setLoading(false);
-    setSaved(false);
+
+    setCierreAnterior(toAmountString(ultimoMPPrevio?.disponible_mp));
+    setCierreHoy(toAmountString(arqueoHoy?.disponible_mp));
+
     setDecision(null);
     setObservacion('');
-    setCierreHoy('');
-  };
+  } catch (error) {
+    console.error('Error cargando Control MP:', error);
+    setSaveError('No se pudo cargar el control MP.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => { fetchData(); }, [fecha]);
 
   const handleGuardar = async () => {
-    if (diferencia !== 0 && !decision) return;
-    setSaving(true);
+  if (diferencia !== 0 && !decision) return;
 
-    // Guardar cierre real en arqueo
-    await db.upsertArqueo({ fecha, disponible_mp: cierreReal });
+  setSaving(true);
+  setSaveError('');
+  setSaveMessage('');
+
+  try {
+    let notice = 'Control MP registrado — sin diferencia';
+
+    // 1. Guardar cierre real del día
+    await db.upsertArqueo({
+      fecha,
+      disponible_mp: cierreReal,
+    });
 
     if (diferencia !== 0) {
       if (decision === 'ajuste_metodo') {
-        // Error de imputación entre métodos → solo registrar en diferencias
+        // Solo registrar la reasignación
         await db.insertDiferencia({
           fecha,
           metodo: 'MercadoPago',
@@ -144,8 +182,28 @@ export default function ControlMP() {
           tipo: 'reasignacion',
           observacion: observacion || null,
         });
-      } else if (decision === 'diferencia_real') {
-        // Diferencia real de dinero → registrar en diferencias
+
+        notice = `Reasignación ${money(Math.abs(diferencia))} registrada`;
+      }
+
+      if (decision === 'diferencia_real') {
+        // Buscar el cobro MP del día
+        const cobrosMP = movsPorMetodo.MercadoPago.filter(
+          m => Number(m.entrada) > 0
+        );
+
+        if (cobrosMP.length !== 1) {
+          throw new Error('No se pudo identificar el Cobro MP del día para ajustarlo.');
+        }
+
+        const mov = cobrosMP[0];
+        const entradaAjustada = Number(mov.entrada) + diferencia;
+
+        if (entradaAjustada < 0) {
+          throw new Error('La diferencia supera el Cobro MP del día.');
+        }
+
+        // 1. Registrar la diferencia
         await db.insertDiferencia({
           fecha,
           metodo: 'MercadoPago',
@@ -154,12 +212,31 @@ export default function ControlMP() {
           tipo: 'diferencia_real',
           observacion: observacion || null,
         });
+
+        // 2. Ajustar automáticamente el cobro MP
+        await db.updateMovimiento(mov.id!, {
+          concepto: mov.concepto,
+          entrada: entradaAjustada,
+          salida: Number(mov.salida),
+          metodo: mov.metodo,
+          categoria: mov.categoria ?? null,
+        });
+
+        notice = `Diferencia real ${money(Math.abs(diferencia))} registrada y Cobro MP ajustado automáticamente`;
       }
     }
 
+    await fetchData({ preserveNotice: true });
+    setSaveMessage(notice);
+  } catch (error) {
+    console.error('Error guardando Control MP:', error);
+    setSaveError(
+      error instanceof Error ? error.message : 'No se pudo guardar el control MP.'
+    );
+  } finally {
     setSaving(false);
-    setSaved(true);
-  };
+  }
+};
 
   const handleDelete = async (id: string) => {
     await db.deleteMovimiento(id);
@@ -495,18 +572,20 @@ export default function ControlMP() {
               )}
 
               {/* Confirmado */}
-              {saved && (
-                <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-4 py-3 text-sm font-semibold text-[#3d6942]">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#bdd8b8]">
-                    ✓
-                  </div>
-                  {diferencia === 0
-                    ? 'Control MP registrado — sin diferencia'
-                    : decision === 'ajuste_metodo'
-                      ? `Reasignación ${money(Math.abs(diferencia))} registrada`
-                      : `Diferencia real ${money(Math.abs(diferencia))} registrada`}
-                </div>
-              )}
+              {saveError && (
+  <div className="mt-3 rounded-xl border border-[#f0b9b3] bg-[#fdf0ee] px-4 py-3 text-sm font-semibold text-[#ba4a3a]">
+    {saveError}
+  </div>
+)}
+
+{saveMessage && (
+  <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-4 py-3 text-sm font-semibold text-[#3d6942]">
+    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#bdd8b8]">
+      ✓
+    </div>
+    {saveMessage}
+  </div>
+)}
             </>
           )}
         </div>
