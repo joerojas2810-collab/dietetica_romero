@@ -3,11 +3,12 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   ArrowDownLeft, ArrowUpRight, ClipboardList, Download,
-  Filter, Search, Trash2,
+  Filter, Pencil, Search, Trash2,
 } from 'lucide-react';
 import { Movimiento } from '@/lib/supabase';
 import { db } from '@/lib/api';
 import { money } from '@/lib/helpers';
+import EditMovimientoModal from '@/components/shared/EditMovimientoModal';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -18,16 +19,18 @@ export default function Movements() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
+  const [editing, setEditing] = useState<Movimiento | null>(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+    const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+    const data = await db.getMovimientosMesDesc(inicio, fin);
+    setMovimientos(data);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
-      const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
-      const data = await db.getMovimientosMesDesc(inicio, fin);
-      setMovimientos(data);
-      setLoading(false);
-    };
     fetchData();
   }, [mes]);
 
@@ -43,6 +46,22 @@ export default function Movements() {
     await db.deleteMovimiento(id);
     setMovimientos(movimientos.filter(m => m.id !== id));
   };
+
+  
+
+  const handleUpdate = async (updated: {
+    concepto: string;
+    entrada: number;
+    salida: number;
+    metodo: string;
+    categoria?: string | null;
+  }) => {
+    if (!editing?.id) return;
+    await db.updateMovimiento(editing.id, updated);
+    setEditing(null);
+    fetchData();
+  };
+  
 
   return (
     <div className="animate-in fade-in duration-500">
@@ -100,7 +119,9 @@ export default function Movements() {
               <tbody>
                 {filtered.map(m => (
                   <tr key={m.id} className="border-b border-[#f0f2ee] transition hover:bg-[#fbfcfa]">
-                    <td className="whitespace-nowrap px-6 py-4 text-xs text-[#899689]">{format(parseISO(m.fecha), 'd MMM yyyy', { locale: es })}</td>
+                    <td className="whitespace-nowrap px-6 py-4 text-xs text-[#899689]">
+                      {format(parseISO(m.fecha), 'd MMM yyyy', { locale: es })}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2.5">
                         <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${m.entrada > 0 ? 'bg-[#e5f1e2] text-[#619167]' : 'bg-[#f9ebe6] text-[#bd806d]'}`}>
@@ -109,12 +130,31 @@ export default function Movements() {
                         <span className="text-xs font-semibold text-[#3c4e3e]">{m.concepto}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4"><span className="rounded-full bg-[#f0f4ed] px-2.5 py-1 text-[10px] font-semibold text-[#748573]">{m.metodo}</span></td>
-                    <td className="px-6 py-4 text-xs text-[#899689]">{m.categoria || '—'}</td>
-                    <td className="px-6 py-4 text-right text-xs font-bold text-[#56805b]">{m.entrada > 0 ? money(Number(m.entrada)) : '—'}</td>
-                    <td className="px-6 py-4 text-right text-xs font-bold text-[#ba7665]">{m.salida > 0 ? money(Number(m.salida)) : '—'}</td>
                     <td className="px-6 py-4">
-                      <button onClick={() => handleDelete(m.id!)} className="text-[#a6b0a5] hover:text-[#ba4a3a]"><Trash2 size={15} /></button>
+                      <span className="rounded-full bg-[#f0f4ed] px-2.5 py-1 text-[10px] font-semibold text-[#748573]">{m.metodo}</span>
+                    </td>
+                    <td className="px-6 py-4 text-xs text-[#899689]">{m.categoria || '—'}</td>
+                    <td className="px-6 py-4 text-right text-xs font-bold text-[#56805b]">
+                      {m.entrada > 0 ? money(Number(m.entrada)) : '—'}
+                    </td>
+                    <td className="px-6 py-4 text-right text-xs font-bold text-[#ba7665]">
+                      {m.salida > 0 ? money(Number(m.salida)) : '—'}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setEditing(m)}
+                          className="text-[#a6b0a5] hover:text-[#40562a]"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(m.id!)}
+                          className="text-[#a6b0a5] hover:text-[#ba4a3a]"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -134,6 +174,15 @@ export default function Movements() {
           </div>
         )}
       </div>
+
+      {/* Modal de edición */}
+      {editing && (
+        <EditMovimientoModal
+          movimiento={editing}
+          onSave={handleUpdate}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }

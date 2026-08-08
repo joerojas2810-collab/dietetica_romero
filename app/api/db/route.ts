@@ -525,6 +525,31 @@ export async function POST(req: NextRequest) {
         });
       }
 
+            case 'updateMovimiento': {
+        const { id, concepto, entrada, salida, metodo, categoria } =
+          (payload ?? {}) as {
+            id: string;
+            concepto: string;
+            entrada: number;
+            salida: number;
+            metodo: string;
+            categoria?: string | null;
+          };
+
+        if (!id) {
+          return NextResponse.json({ error: 'Falta id' }, { status: 400 });
+        }
+
+        const { data, error } = await supabase
+          .from('movimientos')
+          .update({ concepto, entrada, salida, metodo, categoria })
+          .eq('id', id)
+          .select();
+
+        if (error) throw error;
+        return NextResponse.json({ data });
+      }
+
       default:
         return NextResponse.json(
           { error: `Action desconocida: ${action}` },

@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, CirclePlus, Trash2 } from 'lucide-react';
+import EditMovimientoModal from '@/components/shared/EditMovimientoModal';
 import { Movimiento, MetodoPago, CategoriaGasto } from '@/lib/supabase';
 import { db } from '@/lib/api';
 import { money } from '@/lib/helpers';
 import AmountField from '@/components/shared/AmountField';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+
 
 export default function PagosIndividuales() {
   const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -19,6 +21,7 @@ export default function PagosIndividuales() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [pagosDelDia, setPagosDelDia] = useState<Movimiento[]>([]);
+  const [editing, setEditing] = useState<Movimiento | null>(null);
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
 
@@ -50,6 +53,19 @@ export default function PagosIndividuales() {
 
   const handleDelete = async (id: string) => {
     await db.deleteMovimiento(id);
+    fetchPagos();
+  };
+
+    const handleUpdate = async (updated: {
+    concepto: string;
+    entrada: number;
+    salida: number;
+    metodo: string;
+    categoria?: string | null;
+  }) => {
+    if (!editing?.id) return;
+    await db.updateMovimiento(editing.id, updated);
+    setEditing(null);
     fetchPagos();
   };
 
@@ -133,8 +149,21 @@ export default function PagosIndividuales() {
                     <span className={`text-sm font-bold ${Number(m.entrada) > 0 ? 'text-[#56805b]' : 'text-[#ba7665]'}`}>
                       {Number(m.entrada) > 0 ? `+${money(Number(m.entrada))}` : `-${money(Number(m.salida))}`}
                     </span>
-                    <button onClick={() => handleDelete(m.id!)} className="text-[#b5beb4] hover:text-[#ba4a3a]"><Trash2 size={14} /></button>
-                  </div>
+                    <div className="flex items-center gap-2">
+  <button onClick={() => setEditing(m)} className="text-[#b5beb4] hover:text-[#40562a]">
+    <Pencil size={14} />
+  </button>
+  <button onClick={() => handleDelete(m.id!)} className="text-[#b5beb4] hover:text-[#ba4a3a]">
+    <Trash2 size={14} />
+  </button>
+</div>                  </div>
+      {editing && (
+        <EditMovimientoModal
+          movimiento={editing}
+          onSave={handleUpdate}
+          onClose={() => setEditing(null)}
+        />
+      )}
                 </div>
               ))}
             </div>

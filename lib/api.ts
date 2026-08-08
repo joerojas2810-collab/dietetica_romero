@@ -54,6 +54,19 @@ async function dbRequest<T>(
 // ─── API pública ───────────────────────────────────────────────────────────────
 export const db = {
 
+    updateMovimiento: async (
+    id: string,
+    row: {
+      concepto: string;
+      entrada: number;
+      salida: number;
+      metodo: string;
+      categoria?: string | null;
+    }
+  ): Promise<void> => {
+    await dbRequest('updateMovimiento', { id, ...row });
+  },
+
     getReportesData: async (
     inicio: string,
     fin: string
