@@ -119,14 +119,21 @@ export default function Dashboard() {
   // ── Diferencias del arqueo ────────────────────────────────────────
   // OJO: Estas diferencias comparan el último arqueo físico contra el saldo mensual total actual.
   // Banco: usa disponible_banco si existe, sino disponible_debito (legacy)
-  const disponibleBanco = arqueo
-    ? Number(arqueo.disponible_banco ?? arqueo.disponible_debito ?? 0)
-    : null;
-  const difBanco = disponibleBanco !== null ? disponibleBanco - saldoBanco : null;
-  const difMP = arqueo ? (Number(arqueo.disponible_mp) || 0) - saldoMP : null;
-  const difEfectivo = arqueo
-    ? (Number(arqueo.total_contado) || 0) - saldoEfectivo
-    : null;
+  const disponibleBanco = arqueo && (arqueo.disponible_banco != null || arqueo.disponible_debito != null)
+  ? Number(arqueo.disponible_banco ?? arqueo.disponible_debito)
+  : null;
+
+const disponibleMP = arqueo && arqueo.disponible_mp != null
+  ? Number(arqueo.disponible_mp)
+  : null;
+
+const contadoEfectivo = arqueo && arqueo.total_contado != null
+  ? Number(arqueo.total_contado)
+  : null;
+
+const difBanco = disponibleBanco != null ? disponibleBanco - saldoBanco : null;
+const difMP = disponibleMP != null ? disponibleMP - saldoMP : null;
+const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : null;
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center text-[#849083]">
@@ -223,29 +230,21 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="mt-4">
-        <ControlBadge
-          label="Estado meta diaria"
-          dif={brechaVsMeta}
-          status={semaforoMeta(brechaVsMeta)}
-        />
-      </div>
-
       {/* ── Arqueo badges ───────────────────────────────────────────── */}
       {arqueo && (
         <div className="mt-5 grid gap-4 sm:grid-cols-3">
           <ControlBadge
-            label="Arqueo efectivo"
+            label="Diferencia efectivo"
             dif={difEfectivo}
             status={semaforo(difEfectivo)}
           />
           <ControlBadge
-            label="Disponible Banco"
+            label="Diferencia Banco"
             dif={difBanco}
             status={semaforo(difBanco)}
           />
           <ControlBadge
-            label="Disponible MP"
+            label="Diferencia MP"
             dif={difMP}
             status={semaforo(difMP)}
           />
@@ -393,17 +392,17 @@ export default function Dashboard() {
             </div>
             <div className="mt-7 space-y-4">
               <ControlRow
-                label="Arqueo efectivo"
+                label="Diferencia efectivo"
                 value={difEfectivo !== null ? money(difEfectivo) : '—'}
                 status={semaforo(difEfectivo)}
               />
               <ControlRow
-                label="Disponible Banco"
+                label="Diferencia Banco"
                 value={difBanco !== null ? money(difBanco) : '—'}
                 status={semaforo(difBanco)}
               />
               <ControlRow
-                label="Disponible MP"
+                label="Diferencia MP"
                 value={difMP !== null ? money(difMP) : '—'}
                 status={semaforo(difMP)}
               />
