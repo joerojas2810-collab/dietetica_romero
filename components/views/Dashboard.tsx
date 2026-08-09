@@ -230,27 +230,6 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
         />
       </div>
 
-      {/* ── Arqueo badges ───────────────────────────────────────────── */}
-      {arqueo && (
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
-          <ControlBadge
-            label="Diferencia efectivo"
-            dif={difEfectivo}
-            status={semaforo(difEfectivo)}
-          />
-          <ControlBadge
-            label="Diferencia Banco"
-            dif={difBanco}
-            status={semaforo(difBanco)}
-          />
-          <ControlBadge
-            label="Diferencia MP"
-            dif={difMP}
-            status={semaforo(difMP)}
-          />
-        </div>
-      )}
-
       {/* ── Gráficos ────────────────────────────────────────────────── */}
       <div className="mt-7 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
         {/* Barras ventas */}
