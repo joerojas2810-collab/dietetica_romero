@@ -2,15 +2,16 @@
 
 import Login from '@/components/Login';
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   BarChart3, Building2, CalendarDays, ChevronDown, CirclePlus,
   ClipboardList, Cloud, Menu, PiggyBank,
-  Settings2, ShieldCheck, X,
+  Settings2, ShieldCheck, X, LogOut,
 } from 'lucide-react';
 import { supabaseAuth } from '@/lib/api';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { Toaster, toast } from 'sonner';
 
 import NavItem from '@/components/shared/NavItem';
 import {
@@ -77,34 +78,70 @@ const viewTitles: Record<View, string> = {
 export default function Home() {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [view, setView] = useState<View>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [showToast, setShowToast] = useState(false);
-  const [toastMsg, setToastMsg] = useState('');
 
+  // ────────────────────────────────────────────────────────────────
+  // CAMBIO #1: Race condition fix - Esperar getSession antes de suscribirse
+  // ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    supabaseAuth.auth.getSession().then(({ data: { session } }) => {
-      setAuthenticated(!!session);
-      setCheckingAuth(false);
-    });
+    let isMounted = true;
 
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabaseAuth.auth.getSession();
+        if (isMounted) {
+          setAuthenticated(!!session);
+        }
+      } catch (error) {
+        console.error('Error checking auth:', error);
+        if (isMounted) {
+          setAuthenticated(false);
+        }
+      } finally {
+        if (isMounted) {
+          setCheckingAuth(false);
+        }
+      }
+    };
+
+    checkAuth();
+
+    // Suscribirse DESPUÉS de checkear (no en paralelo)
     const { data: { subscription } } = supabaseAuth.auth.onAuthStateChange(
-      (_event, session) => setAuthenticated(!!session)
+      (_event, session) => {
+        if (isMounted) {
+          setAuthenticated(!!session);
+        }
+      }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const toast = (msg: string) => {
-    setToastMsg(msg);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3200);
-  };
-
-  const handleLogout = async () => {
-    await supabaseAuth.auth.signOut();
-    setAuthenticated(false);
-  };
+  // ────────────────────────────────────────────────────────────────
+  // CAMBIO #2: Logout con feedback visual y manejo de errores
+  // ────────────────────────────────────────────────────────────────
+  const handleLogout = useCallback(async () => {
+    setIsLoggingOut(true);
+    try {
+      await supabaseAuth.auth.signOut();
+      setAuthenticated(false);
+      toast.success('Sesión cerrada correctamente', {
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error('Error logging out:', error);
+      toast.error('Error al cerrar sesión', {
+        duration: 3000,
+      });
+      setIsLoggingOut(false);
+    }
+  }, []);
 
   const nav = (v: View) => {
     setView(v);
@@ -121,12 +158,19 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#f6f7f2] text-[#243126]">
+      {/* Toaster global - CAMBIO #3: Usar sonner en lugar de toast manual */}
+      <Toaster position="bottom-right" />
+
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-[#e5e9df] bg-[#fbfcf8] px-5 py-6 transition-transform duration-300 lg:translate-x-0 overflow-y-auto ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="mb-10 flex items-center justify-between px-2">
-          <button onClick={() => nav('dashboard')} className="text-left">
+          <button
+            onClick={() => nav('dashboard')}
+            className="text-left hover:opacity-80 transition"
+            aria-label="Ir al dashboard"
+          >
             <div className="relative h-[82px] w-[188px] overflow-hidden rounded-2xl bg-[#fdfdf9]">
               <img
                 src="/IMG_7336.jpg"
@@ -135,12 +179,17 @@ export default function Home() {
               />
             </div>
           </button>
-          <button className="lg:hidden" onClick={() => setMobileOpen(false)}>
+          {/* CAMBIO #4: Mejorar accesibilidad - Agregar aria-label */}
+          <button
+            className="lg:hidden"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Cerrar menú"
+          >
             <X size={20} />
           </button>
         </div>
 
-                <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
+        <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a2aea0]">
           Operación
         </p>
         <nav className="space-y-1">
@@ -178,17 +227,23 @@ export default function Home() {
           </p>
         </div>
 
+        {/* CAMBIO #5: Logout button mejorado con estado visual y icon */}
         <button
           onClick={handleLogout}
-          className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-[#e4e9de] bg-white p-3 transition hover:bg-[#fdf0ee]"
+          disabled={isLoggingOut}
+          className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-[#e4e9de] bg-white p-3 transition hover:bg-[#fdf0ee] disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="Cerrar sesión"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#e9e3f3] text-sm font-bold text-[#4a5b2c]">
             DR
           </div>
-          <div className="text-left">
+          <div className="text-left flex-1">
             <p className="text-xs font-bold">D. Romero</p>
-            <p className="text-[11px] text-[#ba7665]">Cerrar sesión</p>
+            <p className="text-[11px] text-[#ba7665]">
+              {isLoggingOut ? 'Cerrando...' : 'Cerrar sesión'}
+            </p>
           </div>
+          {!isLoggingOut && <LogOut size={16} className="text-[#ba7665]" />}
         </button>
       </aside>
 
@@ -196,7 +251,13 @@ export default function Home() {
       <div className="lg:pl-[248px]">
         <header className="sticky top-0 z-30 flex h-[76px] items-center justify-between border-b border-[#e8ece4] bg-[#f6f7f2]/95 px-5 backdrop-blur-md sm:px-8 lg:px-12">
           <div className="flex items-center gap-3">
-            <button className="lg:hidden" onClick={() => setMobileOpen(true)}>
+            {/* CAMBIO #6: Mejorar accesibilidad del botón de menú mobile */}
+            <button
+              className="lg:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Abrir menú"
+              aria-expanded={mobileOpen}
+            >
               <Menu size={22} />
             </button>
             <div>
@@ -219,7 +280,7 @@ export default function Home() {
 
         <section className="mx-auto max-w-[1440px] px-5 py-7 sm:px-8 lg:px-12 lg:py-10">
           {view === 'dashboard'    && <Dashboard />}
-          {view === 'day'          && <DayForm onSave={toast} />}
+          {view === 'day'          && <DayForm onSave={(msg) => toast.success(msg)} />}
           {view === 'movements'    && <Movements />}
           {view === 'cartuchera'   && <Cartuchera />}
           {view === 'controlmp'    && <ControlMP />}
@@ -230,13 +291,6 @@ export default function Home() {
           {view === 'reportes'     && <Reportes />}
         </section>
       </div>
-
-      {showToast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border border-[#c9ddc5] bg-[#eff8ed] px-5 py-4 text-sm font-semibold text-[#3d6942] shadow-xl">
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#bdd8b8]">✓</div>
-          {toastMsg}
-        </div>
-      )}
     </main>
   );
 }

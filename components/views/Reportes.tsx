@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
-import { SaldoApertura, DiferenciaArqueo } from '@/lib/supabase';
+import { SaldoApertura, DiferenciaArqueo, ArqueoDiario, Movimiento } from '@/lib/supabase';
 import { db } from '@/lib/api';
 import { money } from '@/lib/helpers';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
@@ -10,7 +10,6 @@ import { es } from 'date-fns/locale';
 
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
-// Badge inline — evita depender de ControlBadge con props distintas
 function DifBadge({ label, monto, signo }: {
   label: string;
   monto: number;
@@ -34,6 +33,8 @@ export default function Reportes() {
   const [loading, setLoading] = useState(true);
   const [aperturas, setAperturas] = useState<SaldoApertura[]>([]);
   const [diferencias, setDiferencias] = useState<DiferenciaArqueo[]>([]);
+  const [arqueosMes, setArqueosMes] = useState<ArqueoDiario[]>([]);
+  const [movsMes, setMovsMes] = useState<Movimiento[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -41,19 +42,22 @@ export default function Reportes() {
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      const [saldos, difs] = await Promise.all([
+      const [saldos, difs, arqueos, movs] = await Promise.all([
         db.getSaldosApertura(),
         db.getDiferenciasMes(inicio, fin),
+        db.getArqueosMes(inicio, fin),
+        db.getMovimientosMes(inicio, fin),
       ]);
 
       setAperturas(saldos);
       setDiferencias(difs);
+      setArqueosMes(arqueos);
+      setMovsMes(movs);
       setLoading(false);
     };
     fetchData();
   }, [mes]);
 
-  // Agrupar diferencias por fecha para mostrarlas por día
   const difsPorFecha = diferencias.reduce<Record<string, DiferenciaArqueo[]>>(
     (acc, d) => {
       if (!acc[d.fecha]) acc[d.fecha] = [];
@@ -64,10 +68,34 @@ export default function Reportes() {
   );
   const fechasConDifs = Object.keys(difsPorFecha).sort((a, b) => b.localeCompare(a));
 
-  // Totales del mes para resumen
   const totalReasignaciones = diferencias.filter(d => d.tipo === 'reasignacion').length;
   const totalReales = diferencias.filter(d => d.tipo === 'diferencia_real').length;
   const montoTotalDifs = diferencias.reduce((s, d) => s + d.monto * d.signo, 0);
+
+  // ── Helpers caja chica ────────────────────────────────────────────
+  const calcCajaChica = (a: ArqueoDiario) =>
+    Number(a.bill_100 ?? 0) +
+    Number(a.bill_200 ?? 0) +
+    Number(a.bill_500 ?? 0) +
+    Number(a.bill_1000 ?? 0) +
+    Number(a.bill_2000 ?? 0);
+
+  const calcCartuchera = (a: ArqueoDiario) =>
+    Number(a.bill_10000 ?? 0) + Number(a.bill_20000 ?? 0);
+
+  const cobroEfectivoPorFecha = movsMes
+    .filter(m => m.metodo === 'Efectivo' && Number(m.entrada) > 0)
+    .reduce<Record<string, number>>((acc, m) => {
+      acc[m.fecha] = (acc[m.fecha] ?? 0) + Number(m.entrada);
+      return acc;
+    }, {});
+
+  const gastosEfectivoPorFecha = movsMes
+    .filter(m => m.metodo === 'Efectivo' && Number(m.salida) > 0)
+    .reduce<Record<string, number>>((acc, m) => {
+      acc[m.fecha] = (acc[m.fecha] ?? 0) + Number(m.salida);
+      return acc;
+    }, {});
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center text-[#849083]">
@@ -126,7 +154,6 @@ export default function Reportes() {
           ) : (
             <div className="space-y-2">
               {aperturas.map(a => {
-                // Soporta campos viejos y nuevos
                 const cajaChica = Number(a.caja_chica ?? a.efectivo ?? 0);
                 const cartuchera = Number(a.cartuchera ?? 0);
                 const banco = Number(a.banco ?? a.debito ?? 0);
@@ -175,7 +202,6 @@ export default function Reportes() {
             Ajustes aceptados en arqueos de banco, MP, efectivo y cartuchera.
           </p>
 
-          {/* Resumen del mes */}
           {diferencias.length > 0 && (
             <div className="mb-4 grid grid-cols-3 gap-2 text-[11px]">
               <div className="rounded-xl bg-[#f5f5ec] p-3 text-center">
@@ -193,7 +219,6 @@ export default function Reportes() {
             </div>
           )}
 
-          {/* Monto neto */}
           {diferencias.length > 0 && (
             <div className={`mb-4 flex items-center justify-between rounded-xl px-4 py-3 text-sm ${
               montoTotalDifs >= 0
@@ -249,6 +274,79 @@ export default function Reportes() {
           )}
         </div>
       </div>
+
+      {/* ── HISTÓRICO CAJA CHICA ───────────────────────────────────────── */}
+      {arqueosMes.length > 0 && (
+        <div className="mt-5 rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <p className="mb-1 text-sm font-bold">Histórico caja chica</p>
+          <p className="mb-5 text-xs text-[#99a398]">
+            Cierre diario de billetes chicos y cartuchera del mes seleccionado.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-[#e5eae1] text-left text-[#849083]">
+                  <th className="pb-3 pr-4 font-semibold">Fecha</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">$100</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">$200</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">$500</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">$1.000</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">$2.000</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">Caja chica</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">Cartuchera</th>
+                  <th className="pb-3 pr-3 text-right font-semibold">Cobro Efvo</th>
+                  <th className="pb-3 text-right font-semibold">Gastos Efvo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f0f3ee]">
+                {[...arqueosMes]
+                  .sort((a, b) => b.fecha.localeCompare(a.fecha))
+                  .map(a => {
+                    const cajaChica = calcCajaChica(a);
+                    const cartuchera = calcCartuchera(a);
+                    const cobro = cobroEfectivoPorFecha[a.fecha] ?? 0;
+                    const gastos = gastosEfectivoPorFecha[a.fecha] ?? 0;
+                    return (
+                      <tr key={a.fecha} className="hover:bg-[#f9fbf7]">
+                        <td className="py-3 pr-4 font-semibold text-[#3c4e3e]">
+                          {format(parseISO(a.fecha), "d MMM", { locale: es })}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#849083]">
+                          {Number(a.bill_100 ?? 0) > 0 ? money(Number(a.bill_100)) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#849083]">
+                          {Number(a.bill_200 ?? 0) > 0 ? money(Number(a.bill_200)) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#849083]">
+                          {Number(a.bill_500 ?? 0) > 0 ? money(Number(a.bill_500)) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#849083]">
+                          {Number(a.bill_1000 ?? 0) > 0 ? money(Number(a.bill_1000)) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#849083]">
+                          {Number(a.bill_2000 ?? 0) > 0 ? money(Number(a.bill_2000)) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right font-bold text-[#40562a]">
+                          {money(cajaChica)}
+                        </td>
+                        <td className="py-3 pr-3 text-right font-semibold text-[#526b53]">
+                          {cartuchera > 0 ? money(cartuchera) : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-[#3d6942]">
+                          {cobro > 0 ? `+${money(cobro)}` : '—'}
+                        </td>
+                        <td className="py-3 text-right text-[#ba7665]">
+                          {gastos > 0 ? `-${money(gastos)}` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

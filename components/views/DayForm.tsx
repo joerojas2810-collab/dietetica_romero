@@ -1,18 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ArrowUpRight, CalendarDays, CirclePlus, Cloud,
   Receipt, ShieldCheck, Sparkles, Trash2, CreditCard,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { Movimiento, MetodoPago, CategoriaGasto } from '@/lib/supabase';
+import { Movimiento, MetodoPago, CategoriaGasto, ArqueoDiario } from '@/lib/supabase';
 import { db } from '@/lib/api';
 import { money } from '@/lib/helpers';
 import SectionCard from '@/components/shared/SectionCard';
 import AmountField from '@/components/shared/AmountField';
 import BillField from '@/components/shared/BillField';
 import CreditCardIcon from '@/components/shared/CreditCardIcon';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 const today = format(new Date(), 'yyyy-MM-dd');
 
@@ -40,8 +42,38 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
     { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' },
   ]);
   const [saving, setSaving] = useState(false);
+  const [ultimoArqueo, setUltimoArqueo] = useState<ArqueoDiario | null>(null);
+  const [mostrarDetalle, setMostrarDetalle] = useState(false);
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
+
+  const cajaChicaArqueo = (a: ArqueoDiario) =>
+    Number(a.bill_100 ?? 0) +
+    Number(a.bill_200 ?? 0) +
+    Number(a.bill_500 ?? 0) +
+    Number(a.bill_1000 ?? 0) +
+    Number(a.bill_2000 ?? 0);
+
+  const cartucheraArqueo = (a: ArqueoDiario) =>
+    Number(a.bill_10000 ?? 0) + Number(a.bill_20000 ?? 0);
+
+  useEffect(() => {
+    const fetchUltimoArqueo = async () => {
+      const ayer = format(
+        new Date(new Date().setDate(new Date().getDate() - 1)),
+        'yyyy-MM-dd'
+      );
+      const arqueos = await db.getArqueosMes('2000-01-01', ayer);
+      const ultimo = arqueos
+        .filter(a =>
+          a.bill_100 != null || a.bill_200 != null ||
+          a.bill_500 != null || a.bill_1000 != null || a.bill_2000 != null
+        )
+        .sort((a, b) => b.fecha.localeCompare(a.fecha))[0] ?? null;
+      setUltimoArqueo(ultimo);
+    };
+    fetchUltimoArqueo();
+  }, []);
 
   const totalCobrado = n(cobroMP) + n(cobroEfectivo) + n(cobroDebito) + n(cobroCredito);
   const totalBanco = n(cobroDebito) + n(cobroCredito);
@@ -124,6 +156,95 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         />
       </div>
 
+      {/* ── Card último cierre caja chica ─────────────────────────── */}
+      {ultimoArqueo && (
+        <div className="mb-5 rounded-3xl border border-[#e5eae1] bg-white shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+          <button
+            onClick={() => setMostrarDetalle(v => !v)}
+            className="flex w-full items-center justify-between px-6 py-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#eef3e8]">
+                <Receipt size={16} className="text-[#40562a]" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-semibold text-[#849083]">
+                  Último cierre · {format(parseISO(ultimoArqueo.fecha), "d 'de' MMMM", { locale: es })}
+                </p>
+                <p className="text-lg font-bold text-[#253729]">
+                  Caja chica: {money(cajaChicaArqueo(ultimoArqueo))}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="hidden text-sm font-semibold text-[#526b53] sm:block">
+                Cartuchera: {money(cartucheraArqueo(ultimoArqueo))}
+              </span>
+              {mostrarDetalle
+                ? <ChevronUp size={16} className="text-[#849083]" />
+                : <ChevronDown size={16} className="text-[#849083]" />
+              }
+            </div>
+          </button>
+
+          {mostrarDetalle && (
+            <div className="border-t border-[#e5eae1] px-6 pb-5 pt-4">
+              <p className="mb-3 text-xs font-bold text-[#40562a]">Detalle de billetes</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {[
+                  { label: '$100',   val: Number(ultimoArqueo.bill_100  ?? 0), denom: 100   },
+                  { label: '$200',   val: Number(ultimoArqueo.bill_200  ?? 0), denom: 200   },
+                  { label: '$500',   val: Number(ultimoArqueo.bill_500  ?? 0), denom: 500   },
+                  { label: '$1.000', val: Number(ultimoArqueo.bill_1000 ?? 0), denom: 1000  },
+                  { label: '$2.000', val: Number(ultimoArqueo.bill_2000 ?? 0), denom: 2000  },
+                ].map(({ label, val, denom }) => (
+                  <div key={denom} className="rounded-xl border border-[#e5eae1] bg-[#f9fbf7] px-3 py-2">
+                    <p className="text-[10px] text-[#849083]">{label}</p>
+                    <p className="text-xs font-bold text-[#3c4e3e]">
+                      {val > 0 ? `${val / denom} × ${label}` : '—'}
+                    </p>
+                    <p className="text-[11px] font-semibold text-[#40562a]">
+                      {val > 0 ? money(val) : '$ 0'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-[#d5e5d1] bg-[#f2f0e8] p-4">
+                <p className="mb-2 text-xs font-bold text-[#40562a]">→ Cartuchera</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: '$10.000', val: Number(ultimoArqueo.bill_10000 ?? 0), denom: 10000 },
+                    { label: '$20.000', val: Number(ultimoArqueo.bill_20000 ?? 0), denom: 20000 },
+                  ].map(({ label, val, denom }) => (
+                    <div key={denom} className="rounded-xl border border-[#c8dcc3] bg-white px-3 py-2">
+                      <p className="text-[10px] text-[#849083]">{label}</p>
+                      <p className="text-xs font-bold text-[#3c4e3e]">
+                        {val > 0 ? `${val / denom} × ${label}` : '—'}
+                      </p>
+                      <p className="text-[11px] font-semibold text-[#40562a]">
+                        {val > 0 ? money(val) : '$ 0'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between rounded-lg bg-[#40562a] px-4 py-2 text-white">
+                  <span className="text-xs">Total cartuchera</span>
+                  <span className="text-sm font-bold">{money(cartucheraArqueo(ultimoArqueo))}</span>
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
+                <span className="text-xs font-medium text-[#768676]">Total caja chica</span>
+                <span className="text-lg font-bold text-[#40562a]">
+                  {money(cajaChicaArqueo(ultimoArqueo))}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="space-y-5">
           {/* ── 01 Cobros ──────────────────────────────────────────────── */}
@@ -159,13 +280,11 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
               />
             </div>
 
-            {/* Total cobrado */}
             <div className="mt-4 flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
               <span className="text-xs font-medium text-[#768676]">Total cobrado</span>
               <span className="text-lg font-bold text-[#40562a]">{money(totalCobrado)}</span>
             </div>
 
-            {/* Subtotal banco */}
             {totalBanco > 0 && (
               <div className="mt-2 flex items-center justify-between rounded-xl border border-[#e5eae1] px-4 py-2">
                 <span className="text-[11px] font-medium text-[#849083]">

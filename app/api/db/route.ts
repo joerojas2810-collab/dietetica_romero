@@ -9,36 +9,44 @@ const supabase = createClient(
 );
 
 // ─── Cache de tokens validados (5 minutos) ────────────────────────────────────
-const tokenCache = new Map<string, { valid: boolean; timestamp: number }>();
+const tokenCache = new Map<string, { valid: boolean; userId: string | null; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
 
-async function autenticar(req: NextRequest): Promise<boolean> {
-  const apiSecret = req.headers.get('x-api-secret');
-  if (apiSecret !== process.env.API_SECRET) return false;
-
+// ─── CAMBIO #1: Simplificar autenticación - Solo validar JWT ──────────────────
+async function autenticar(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ')) return false;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null;
+  }
 
   const token = authHeader.replace('Bearer ', '');
 
+  // Verificar cache primero
   const cached = tokenCache.get(token);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.valid;
+    return cached.valid ? cached.userId : null;
   }
 
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  const valid = !error && !!user;
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const valid = !error && !!user;
+    const userId = user?.id ?? null;
 
-  tokenCache.set(token, { valid, timestamp: Date.now() });
+    tokenCache.set(token, { valid, userId, timestamp: Date.now() });
 
-  if (tokenCache.size > 100) {
-    const now = Date.now();
-    tokenCache.forEach((v, k) => {
-      if (now - v.timestamp > CACHE_TTL) tokenCache.delete(k);
-    });
+    // Limpiar cache si crece mucho
+    if (tokenCache.size > 100) {
+      const now = Date.now();
+      tokenCache.forEach((v, k) => {
+        if (now - v.timestamp > CACHE_TTL) tokenCache.delete(k);
+      });
+    }
+
+    return valid ? userId : null;
+  } catch (error) {
+    console.error('[auth] Error validating token:', error);
+    return null;
   }
-
-  return valid;
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -100,7 +108,9 @@ const err = (msg: string, status = 400) =>
 
 // ─── POST Handler ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  if (!(await autenticar(req))) {
+  // CAMBIO #2: Validar JWT y obtener user_id
+  const userId = await autenticar(req);
+  if (!userId) {
     return err('No autorizado', 401);
   }
 
@@ -515,7 +525,9 @@ export async function POST(req: NextRequest) {
         return err(`Action desconocida: ${action}`);
     }
   } catch (e) {
-    console.error(`[api/db] Error en action "${action}":`, e);
+    // CAMBIO #3: Mejor logging con detalles
+    const errorMsg = e instanceof Error ? e.message : 'Error desconocido';
+    console.error(`[api/db] Error en action "${action}":`, errorMsg);
     return err('Error interno del servidor', 500);
   }
 }
