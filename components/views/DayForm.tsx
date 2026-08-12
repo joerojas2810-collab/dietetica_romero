@@ -87,7 +87,15 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const val20000 = n(qty20000) * 20000;
   const cajaFuerteTotal = val10000 + val20000;
   const totalContado = val100 + val200 + val500 + val1000 + val2000 + cajaFuerteTotal;
-  const difEfectivo = totalContado - n(cobroEfectivo);
+  const gastosEfectivoHoy = gastos
+  .filter(g => g.method === 'Efectivo' && n(g.amount) > 0)
+  .reduce((s, g) => s + n(g.amount), 0);
+
+const cajaChicaAnteriorMonto = ultimoArqueo ? cajaChicaArqueo(ultimoArqueo) : 0;
+
+const esperadoEfectivo = cajaChicaAnteriorMonto + n(cobroEfectivo) - gastosEfectivoHoy;
+
+const difEfectivo = totalContado - esperadoEfectivo;
 
   const handleGuardar = async () => {
     setSaving(true);
@@ -330,7 +338,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
               </div>
               <div className="rounded-xl border border-[#d5e5d1] bg-[#f2f0e8] p-4">
                 <p className="text-[10px] uppercase tracking-wider text-[#759376]">
-                  Diferencia vs. sistema
+                  Diferencia vs. esperado
                 </p>
                 <p className="mt-1 text-2xl font-bold text-[#4f8755]">
                   {difEfectivo === 0
