@@ -99,22 +99,25 @@ export default function Dashboard() {
     return apEfectivo + movEfectivoFiltrado;
   };
 
-  // ── AUDITORÍA DE ÚLTIMO CONTROL DISPONIBLE POR MÉTODO ──────────────
-  // Banco
-  const arqBanco = arqueos.find(a => a.disponible_banco != null || a.disponible_debito != null);
+  // ── AUDITORÍA DE ÚLTIMO CONTROL DISPONIBLE CON MONTOS REALES ──────
+  // Banco (Solo toma arqueos donde realmente se guardó un disponible mayor a 0)
+  const arqBanco = arqueos.find(a => 
+    (a.disponible_banco != null && Number(a.disponible_banco) > 0) || 
+    (a.disponible_debito != null && Number(a.disponible_debito) > 0)
+  );
   const disponibleBanco = arqBanco
     ? Number(arqBanco.disponible_banco ?? arqBanco.disponible_debito)
     : null;
   const difBanco = disponibleBanco !== null ? disponibleBanco - getSaldoBancoHasta(arqBanco!.fecha) : null;
   const fechaBanco = arqBanco ? format(parseISO(arqBanco.fecha), "d 'de' MMM", { locale: es }) : '';
 
-  // MercadoPago
-  const arqMP = arqueos.find(a => a.disponible_mp != null);
+  // MercadoPago (Solo toma arqueos donde realmente se controló MP con saldo mayor a 0)
+  const arqMP = arqueos.find(a => a.disponible_mp != null && Number(a.disponible_mp) > 0);
   const disponibleMP = arqMP ? Number(arqMP.disponible_mp) : null;
   const difMP = disponibleMP !== null ? disponibleMP - getSaldoMPHasta(arqMP!.fecha) : null;
   const fechaMP = arqMP ? format(parseISO(arqMP.fecha), "d 'de' MMM", { locale: es }) : '';
 
-  // Efectivo
+  // Efectivo (Solo toma arqueos con conteo físico cargado)
   const arqEf = arqueos.find(a => a.total_contado != null && Number(a.total_contado) > 0);
   const contadoEfectivo = arqEf ? Number(arqEf.total_contado) : null;
   const difEfectivo = contadoEfectivo !== null ? contadoEfectivo - getSaldoEfectivoHasta(arqEf!.fecha) : null;
@@ -255,7 +258,7 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* ── Arqueo badges con fechas independientes ─────────────────── */}
+      {/* ── Arqueo badges con fechas independientes de última auditoría real ─── */}
       <div className="mt-5 grid gap-4 sm:grid-cols-3">
         <ControlBadge
           label={fechaEf ? `Diferencia Efectivo (${fechaEf})` : "Diferencia Efectivo"}
