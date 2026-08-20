@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import {
-  BarChart3, CalendarDays, Cloud, PiggyBank, Receipt,
+  CalendarDays, Cloud, PiggyBank, Receipt,
   ShieldCheck, Sparkles, TrendingUp, Wallet, Building2,
 } from 'lucide-react';
 import {
@@ -13,7 +13,7 @@ import { Movimiento, ArqueoDiario, GastoFijo, SaldoApertura } from '@/lib/supaba
 import { db } from '@/lib/api';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { money, compactMoney, semaforo, semaforoMeta } from '@/lib/helpers';
+import { money, compactMoney, semaforo } from '@/lib/helpers';
 import StatCard from '@/components/shared/StatCard';
 import ControlBadge from '@/components/shared/ControlBadge';
 import ControlRow from '@/components/shared/ControlRow';
@@ -22,24 +22,23 @@ const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
 export default function Dashboard() {
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-  const [arqueo, setArqueo] = useState<ArqueoDiario | null>(null);
+  const [arqueos, setArqueos] = useState<ArqueoDiario[]>([]);
   const [gastosFijos, setGastosFijos] = useState<GastoFijo[]>([]);
   const [apertura, setApertura] = useState<SaldoApertura | null>(null);
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
 
-    useEffect(() => {
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      // Un solo request unificado para evitar doble validación de JWT y latencia
-      const { movimientos: movs, arqueo: arq, gastosFijos: gf, apertura: ap } = 
+      const { movimientos: movs, arqueos: arqs, gastosFijos: gf, apertura: ap } = 
         await db.getDashboardData(inicio, fin, inicio);
 
       setMovimientos(movs);
-      setArqueo(arq);
+      setArqueos(arqs);
       setGastosFijos(gf);
       setApertura(ap);
       setLoading(false);
@@ -52,7 +51,7 @@ export default function Dashboard() {
   const apBanco = Number(apertura?.banco ?? apertura?.debito ?? 0);
   const apMP = Number(apertura?.mercadopago ?? 0);
 
-  // ── MOVIMIENTOS NETOS DEL MES ─────────────────────────────────────
+  // ── MOVIMIENTOS NETOS DEL MES TOTALES ─────────────────────────────
   const movEfectivo = movimientos
     .filter(m => m.metodo === 'Efectivo')
     .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
@@ -69,11 +68,57 @@ export default function Dashboard() {
   const totalSalidas = movimientos.reduce((s, m) => s + Number(m.salida), 0);
   const resultado = totalEntradas - totalSalidas;
 
-  // ── SALDOS REALES (Apertura + Movimientos) ────────────────────────
+  // ── SALDOS REALES AL DÍA DE HOY (SISTEMA) ─────────────────────────
   const saldoEfectivo = apEfectivo + movEfectivo;
   const saldoBanco = apBanco + movBanco;
   const saldoMP = apMP + movMP;
   const saldoTotal = saldoEfectivo + saldoBanco + saldoMP;
+
+  // ── CÁLCULO DE SALDOS HISTÓRICOS HASTA UNA FECHA LIMITE ───────────
+  const getSaldoBancoHasta = (fechaLimite: string) => {
+    const movsFiltrados = movimientos.filter(m => m.fecha <= fechaLimite);
+    const movBancoFiltrado = movsFiltrados
+      .filter(m => m.metodo === 'Debito' || m.metodo === 'Credito')
+      .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+    return apBanco + movBancoFiltrado;
+  };
+
+  const getSaldoMPHasta = (fechaLimite: string) => {
+    const movsFiltrados = movimientos.filter(m => m.fecha <= fechaLimite);
+    const movMPFiltrado = movsFiltrados
+      .filter(m => m.metodo === 'MercadoPago')
+      .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+    return apMP + movMPFiltrado;
+  };
+
+  const getSaldoEfectivoHasta = (fechaLimite: string) => {
+    const movsFiltrados = movimientos.filter(m => m.fecha <= fechaLimite);
+    const movEfectivoFiltrado = movsFiltrados
+      .filter(m => m.metodo === 'Efectivo')
+      .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+    return apEfectivo + movEfectivoFiltrado;
+  };
+
+  // ── AUDITORÍA DE ÚLTIMO CONTROL DISPONIBLE POR MÉTODO ──────────────
+  // Banco
+  const arqBanco = arqueos.find(a => a.disponible_banco != null || a.disponible_debito != null);
+  const disponibleBanco = arqBanco
+    ? Number(arqBanco.disponible_banco ?? arqBanco.disponible_debito)
+    : null;
+  const difBanco = disponibleBanco !== null ? disponibleBanco - getSaldoBancoHasta(arqBanco!.fecha) : null;
+  const fechaBanco = arqBanco ? format(parseISO(arqBanco.fecha), "d 'de' MMM", { locale: es }) : '';
+
+  // MercadoPago
+  const arqMP = arqueos.find(a => a.disponible_mp != null);
+  const disponibleMP = arqMP ? Number(arqMP.disponible_mp) : null;
+  const difMP = disponibleMP !== null ? disponibleMP - getSaldoMPHasta(arqMP!.fecha) : null;
+  const fechaMP = arqMP ? format(parseISO(arqMP.fecha), "d 'de' MMM", { locale: es }) : '';
+
+  // Efectivo
+  const arqEf = arqueos.find(a => a.total_contado != null && Number(a.total_contado) > 0);
+  const contadoEfectivo = arqEf ? Number(arqEf.total_contado) : null;
+  const difEfectivo = contadoEfectivo !== null ? contadoEfectivo - getSaldoEfectivoHasta(arqEf!.fecha) : null;
+  const fechaEf = arqEf ? format(parseISO(arqEf.fecha), "d 'de' MMM", { locale: es }) : '';
 
   // ── Gráficos ──────────────────────────────────────────────────────
   const ventasPorDia = useMemo(() => {
@@ -109,35 +154,17 @@ export default function Dashboard() {
     })).sort((a, b) => b.value - a.value);
   }, [movimientos]);
 
-  // ── Meta diaria ───────────────────────────────────────────────────
   const totalGastosFijos = gastosFijos.reduce((s, g) => s + Number(g.monto), 0);
   const metaDiaria = totalGastosFijos > 0 ? Math.round(totalGastosFijos / 24) : 0;
   const brechaVsMeta = promedioDiario - metaDiaria;
-
-  // ── Diferencias del arqueo ────────────────────────────────────────
-  // OJO: Estas diferencias comparan el último arqueo físico contra el saldo mensual total actual.
-  // Banco: usa disponible_banco si existe, sino disponible_debito (legacy)
-  const disponibleBanco = arqueo && (arqueo.disponible_banco != null || arqueo.disponible_debito != null)
-  ? Number(arqueo.disponible_banco ?? arqueo.disponible_debito)
-  : null;
-
-const disponibleMP = arqueo && arqueo.disponible_mp != null
-  ? Number(arqueo.disponible_mp)
-  : null;
-
-const contadoEfectivo = arqueo && arqueo.total_contado != null
-  ? Number(arqueo.total_contado)
-  : null;
-
-const difBanco = disponibleBanco != null ? disponibleBanco - saldoBanco : null;
-const difMP = disponibleMP != null ? disponibleMP - saldoMP : null;
-const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : null;
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center text-[#849083]">
       Cargando datos...
     </div>
   );
+
+  const fechaBase = parseISO(mes);
 
   return (
     <div className="animate-in fade-in duration-500">
@@ -172,7 +199,7 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
         </select>
       </div>
 
-      {/* ── KPIs principales (Saldos reales) ───────────────────────── */}
+      {/* ── KPIs principales (Saldos reales de sistema hoy) ───────── */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Saldo total"
@@ -228,9 +255,27 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
         />
       </div>
 
+      {/* ── Arqueo badges con fechas independientes ─────────────────── */}
+      <div className="mt-5 grid gap-4 sm:grid-cols-3">
+        <ControlBadge
+          label={fechaEf ? `Diferencia Efectivo (${fechaEf})` : "Diferencia Efectivo"}
+          dif={difEfectivo}
+          status={semaforo(difEfectivo)}
+        />
+        <ControlBadge
+          label={fechaBanco ? `Diferencia Banco (${fechaBanco})` : "Diferencia Banco"}
+          dif={difBanco}
+          status={semaforo(difBanco)}
+        />
+        <ControlBadge
+          label={fechaMP ? `Diferencia MP (${fechaMP})` : "Diferencia MP"}
+          dif={difMP}
+          status={semaforo(difMP)}
+        />
+      </div>
+
       {/* ── Gráficos ────────────────────────────────────────────────── */}
       <div className="mt-7 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
-        {/* Barras ventas */}
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
           <div className="mb-5 flex items-start justify-between">
             <div>
@@ -263,7 +308,6 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
           </div>
         </div>
 
-        {/* Pie gastos */}
         <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
           <div className="flex items-start justify-between">
             <div>
@@ -321,7 +365,6 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
           )}
         </div>
 
-        {/* Línea evolución + controles */}
         <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
           <div className="rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-[0_8px_30px_rgba(65,82,55,0.04)] sm:p-6">
             <div className="mb-4 flex items-start justify-between">
@@ -356,12 +399,11 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
             )}
           </div>
 
-          {/* Controles del día */}
           <div className="rounded-3xl bg-[#40562a] p-6 text-white shadow-xl shadow-[#40562a20]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm font-bold">Controles del día</p>
-                <p className="mt-1 text-xs text-[#c0d7bd]">Último arqueo registrado</p>
+                <p className="text-sm font-bold">Diferencias de Arqueo</p>
+                <p className="mt-1 text-xs text-[#c0d7bd]">Detalle de auditoría por cuenta</p>
               </div>
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10">
                 <ShieldCheck size={18} />
@@ -369,27 +411,27 @@ const difEfectivo = contadoEfectivo != null ? contadoEfectivo - saldoEfectivo : 
             </div>
             <div className="mt-7 space-y-4">
               <ControlRow
-                label="Diferencia efectivo"
+                label={fechaEf ? `Efectivo (${fechaEf})` : "Diferencia Efectivo"}
                 value={difEfectivo !== null ? money(difEfectivo) : '—'}
                 status={semaforo(difEfectivo)}
               />
               <ControlRow
-                label="Diferencia Banco"
+                label={fechaBanco ? `Banco (${fechaBanco})` : "Diferencia Banco"}
                 value={difBanco !== null ? money(difBanco) : '—'}
                 status={semaforo(difBanco)}
               />
               <ControlRow
-                label="Diferencia MP"
+                label={fechaMP ? `MP (${fechaMP})` : "Diferencia MP"}
                 value={difMP !== null ? money(difMP) : '—'}
                 status={semaforo(difMP)}
               />
             </div>
-            {arqueo?.observaciones && (
+            {arqueos.length > 0 && arqueos[0].observaciones && (
               <div className="mt-5 rounded-xl bg-white/10 p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#c0d7bd]">
-                  Observación
+                  Última Observación ({format(parseISO(arqueos[0].fecha), "d/MM")})
                 </p>
-                <p className="mt-1 text-xs">{arqueo.observaciones}</p>
+                <p className="mt-1 text-xs">{arqueos[0].observaciones}</p>
               </div>
             )}
           </div>

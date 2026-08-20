@@ -1,4 +1,3 @@
-// lib/api.ts
 import { createClient } from '@supabase/supabase-js';
 import type {
   Movimiento,
@@ -9,67 +8,42 @@ import type {
   DiferenciaArqueo,
 } from '@/lib/supabase';
 
-// ─── Cliente Supabase Auth (SOLO para autenticación, no para queries) ─────────
-// Usa la anon key porque solo la necesitamos para obtener el JWT del usuario
-// Esta clave con RLS activado no da acceso a los datos
 export const supabaseAuth = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  'https://tqvdfxuetpdoqskyqjcc.supabase.co',
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-// ─── Helper: obtiene el JWT del usuario logueado ──────────────────────────────
 async function getToken(): Promise<string> {
   const { data: { session } } = await supabaseAuth.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error('No hay sesión activa. Por favor, vuelve a iniciar sesión.');
-  }
+  if (!session?.access_token) throw new Error('No hay sesión activa');
   return session.access_token;
 }
 
-// ─── CAMBIO #1: Retry logic para JWT expirado ────────────────────────────────
-// Si JWT expiró, Supabase puede devolver 401. Reintentamos una vez.
 async function dbRequest<T>(
   action: string,
-  payload?: Record<string, unknown>,
-  retries = 1
+  payload?: Record<string, unknown>
 ): Promise<T> {
-  try {
-    const token = await getToken();
+  const token = await getToken();
 
-    const res = await fetch('/api/db', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        // CAMBIO #2: Removemos x-api-secret (innecesario en contexto privado)
-        // El JWT es suficiente validación
-      },
-      body: JSON.stringify({ action, payload }),
-    });
+  const res = await fetch('/api/db', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'x-api-secret': process.env.NEXT_PUBLIC_API_SECRET!,
+    },
+    body: JSON.stringify({ action, payload }),
+  });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-
-      // CAMBIO #3: Si 401 (JWT expirado), reintentar una vez
-      if (res.status === 401 && retries > 0) {
-        console.warn('JWT expirado, reintentando...');
-        return dbRequest<T>(action, payload, retries - 1);
-      }
-
-      console.error('🔴 ERROR EN API DB:', res.status, err);
-      throw new Error(err.error || `Error ${res.status}`);
-    }
-
-    return res.json();
-  } catch (error) {
-    // CAMBIO #4: Mejor logging para debugging
-    const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-    console.error(`[dbRequest] ${action} failed:`, errorMsg);
-    throw error;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error('🔴 ERROR EN API DB:', res.status, err);
+    throw new Error(err.error || `Error ${res.status}`);
   }
+
+  return res.json();
 }
 
-// ─── API pública ───────────────────────────────────────────────────────────────
 export const db = {
   updateMovimiento: async (
     id: string,
@@ -105,26 +79,26 @@ export const db = {
     };
   },
 
-    getDashboardData: async (
+  getDashboardData: async (
     inicio: string,
     fin: string,
     periodo: string
   ): Promise<{
     movimientos: Movimiento[];
-    arqueo: ArqueoDiario | null;
+    arqueos: ArqueoDiario[];
     gastosFijos: GastoFijo[];
     apertura: SaldoApertura | null;
   }> => {
     const res = await dbRequest<{
       movimientos: Movimiento[];
-      arqueo: ArqueoDiario | null;
+      arqueos: ArqueoDiario[];
       gastosFijos: GastoFijo[];
       apertura: SaldoApertura | null;
     }>('getDashboardData', { inicio, fin, periodo });
 
     return {
       movimientos: res.movimientos ?? [],
-      arqueo: res.arqueo ?? null,
+      arqueos: res.arqueos ?? [],
       gastosFijos: res.gastosFijos ?? [],
       apertura: res.apertura ?? null,
     };

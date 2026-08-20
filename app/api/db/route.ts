@@ -1,18 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-// ─── Cliente Supabase (service key, solo servidor) ────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_KEY!,
   { auth: { persistSession: false, autoRefreshToken: false } }
 );
 
-// ─── Cache de tokens validados (5 minutos) ────────────────────────────────────
 const tokenCache = new Map<string, { valid: boolean; userId: string | null; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
 
-// ─── CAMBIO #1: Simplificar autenticación - Solo validar JWT ──────────────────
 async function autenticar(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -21,7 +18,6 @@ async function autenticar(req: NextRequest): Promise<string | null> {
 
   const token = authHeader.replace('Bearer ', '');
 
-  // Verificar cache primero
   const cached = tokenCache.get(token);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.valid ? cached.userId : null;
@@ -34,7 +30,6 @@ async function autenticar(req: NextRequest): Promise<string | null> {
 
     tokenCache.set(token, { valid, userId, timestamp: Date.now() });
 
-    // Limpiar cache si crece mucho
     if (tokenCache.size > 100) {
       const now = Date.now();
       tokenCache.forEach((v, k) => {
@@ -49,7 +44,6 @@ async function autenticar(req: NextRequest): Promise<string | null> {
   }
 }
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
 type MetodoPago = 'Efectivo' | 'Debito' | 'Credito' | 'MercadoPago';
 type CategoriaGasto =
   | 'PERSONAL'
@@ -101,14 +95,11 @@ interface DiferenciaInsert {
   observacion?: string | null;
 }
 
-// ─── Helpers de respuesta ─────────────────────────────────────────────────────
 const ok = (data: unknown) => NextResponse.json(data);
 const err = (msg: string, status = 400) =>
   NextResponse.json({ error: msg }, { status });
 
-// ─── POST Handler ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // CAMBIO #2: Validar JWT y obtener user_id
   const userId = await autenticar(req);
   if (!userId) {
     return err('No autorizado', 401);
@@ -130,10 +121,6 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (action) {
-      // ═══════════════════════════════════════════════════════════════════════
-      // MOVIMIENTOS
-      // ═══════════════════════════════════════════════════════════════════════
-
       case 'getMovimientosMes': {
         if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
@@ -238,10 +225,6 @@ export async function POST(req: NextRequest) {
         return ok({ ok: true });
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // ARQUEO DIARIO
-      // ═══════════════════════════════════════════════════════════════════════
-
       case 'getArqueoMes': {
         if (!p.inicio || !p.fin) return err('Faltan inicio o fin');
 
@@ -306,10 +289,6 @@ export async function POST(req: NextRequest) {
         return ok({ data });
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // SALDOS APERTURA
-      // ═══════════════════════════════════════════════════════════════════════
-
       case 'getSaldoApertura': {
         if (!p.periodo) return err('Falta periodo');
 
@@ -344,10 +323,6 @@ export async function POST(req: NextRequest) {
         if (error) throw error;
         return ok({ data });
       }
-
-      // ═══════════════════════════════════════════════════════════════════════
-      // GASTOS FIJOS
-      // ═══════════════════════════════════════════════════════════════════════
 
       case 'getGastosFijos': {
         if (!p.periodo) return err('Falta periodo');
@@ -392,10 +367,6 @@ export async function POST(req: NextRequest) {
         if (error) throw error;
         return ok({ ok: true });
       }
-
-      // ═══════════════════════════════════════════════════════════════════════
-      // DIFERENCIAS ARQUEO
-      // ═══════════════════════════════════════════════════════════════════════
 
       case 'insertDiferencia': {
         const row = p as unknown as DiferenciaInsert;
@@ -445,11 +416,7 @@ export async function POST(req: NextRequest) {
         return ok({ ok: true });
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // CONSULTAS UNIFICADAS
-      // ═══════════════════════════════════════════════════════════════════════
-
-            case 'getDashboardData': {
+      case 'getDashboardData': {
         if (!p.inicio || !p.fin || !p.periodo) {
           return err('Faltan inicio, fin o periodo');
         }
@@ -466,8 +433,7 @@ export async function POST(req: NextRequest) {
             .select('*')
             .gte('fecha', p.inicio)
             .lte('fecha', p.fin)
-            .order('fecha', { ascending: false })
-            .limit(1),
+            .order('fecha', { ascending: false }), // Eliminado limit(1) para traer el historial del mes
           supabase
             .from('gastos_fijos')
             .select('*')
@@ -483,12 +449,12 @@ export async function POST(req: NextRequest) {
         if (movsRes.error) throw movsRes.error;
         if (arqRes.error) throw arqRes.error;
         if (gfRes.error) throw gfRes.error;
-        
+
         const aperturaData = apRes.error ? null : (apRes.data?.[0] ?? null);
 
         return ok({
           movimientos: movsRes.data,
-          arqueo: arqRes.data?.[0] ?? null,
+          arqueos: arqRes.data ?? [], // Retornamos la lista completa
           gastosFijos: gfRes.data,
           apertura: aperturaData,
         });
@@ -527,13 +493,10 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-
       default:
         return err(`Action desconocida: ${action}`);
     }
   } catch (e) {
-    // CAMBIO #3: Mejor logging con detalles
     const errorMsg = e instanceof Error ? e.message : 'Error desconocido';
     console.error(`[api/db] Error en action "${action}":`, errorMsg);
     return err('Error interno del servidor', 500);
