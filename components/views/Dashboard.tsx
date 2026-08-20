@@ -28,17 +28,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
 
-  useEffect(() => {
+    useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
       const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      // Traemos todo en paralelo: datos del dashboard + la apertura de este mes
-      const [{ movimientos: movs, arqueo: arq, gastosFijos: gf }, ap] = await Promise.all([
-        db.getDashboardData(inicio, fin, inicio),
-        db.getSaldoApertura(inicio)
-      ]);
+      // Un solo request unificado para evitar doble validación de JWT y latencia
+      const { movimientos: movs, arqueo: arq, gastosFijos: gf, apertura: ap } = 
+        await db.getDashboardData(inicio, fin, inicio);
 
       setMovimientos(movs);
       setArqueo(arq);

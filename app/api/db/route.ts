@@ -449,12 +449,12 @@ export async function POST(req: NextRequest) {
       // CONSULTAS UNIFICADAS
       // ═══════════════════════════════════════════════════════════════════════
 
-      case 'getDashboardData': {
+            case 'getDashboardData': {
         if (!p.inicio || !p.fin || !p.periodo) {
           return err('Faltan inicio, fin o periodo');
         }
 
-        const [movsRes, arqRes, gfRes] = await Promise.all([
+        const [movsRes, arqRes, gfRes, apRes] = await Promise.all([
           supabase
             .from('movimientos')
             .select('*')
@@ -473,16 +473,24 @@ export async function POST(req: NextRequest) {
             .select('*')
             .eq('periodo', p.periodo as string)
             .order('concepto', { ascending: true }),
+          supabase
+            .from('saldos_apertura')
+            .select('*')
+            .eq('periodo', p.periodo as string)
+            .limit(1),
         ]);
 
         if (movsRes.error) throw movsRes.error;
         if (arqRes.error) throw arqRes.error;
         if (gfRes.error) throw gfRes.error;
+        
+        const aperturaData = apRes.error ? null : (apRes.data?.[0] ?? null);
 
         return ok({
           movimientos: movsRes.data,
           arqueo: arqRes.data?.[0] ?? null,
           gastosFijos: gfRes.data,
+          apertura: aperturaData,
         });
       }
 

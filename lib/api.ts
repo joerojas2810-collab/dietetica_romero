@@ -105,7 +105,7 @@ export const db = {
     };
   },
 
-  getDashboardData: async (
+    getDashboardData: async (
     inicio: string,
     fin: string,
     periodo: string
@@ -113,17 +113,20 @@ export const db = {
     movimientos: Movimiento[];
     arqueo: ArqueoDiario | null;
     gastosFijos: GastoFijo[];
+    apertura: SaldoApertura | null;
   }> => {
     const res = await dbRequest<{
       movimientos: Movimiento[];
       arqueo: ArqueoDiario | null;
       gastosFijos: GastoFijo[];
+      apertura: SaldoApertura | null;
     }>('getDashboardData', { inicio, fin, periodo });
 
     return {
       movimientos: res.movimientos ?? [],
       arqueo: res.arqueo ?? null,
       gastosFijos: res.gastosFijos ?? [],
+      apertura: res.apertura ?? null,
     };
   },
 
