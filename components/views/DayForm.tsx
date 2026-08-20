@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   ArrowUpRight, CalendarDays, CirclePlus, Cloud,
   Receipt, ShieldCheck, Sparkles, Trash2, CreditCard,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, AlertTriangle,
 } from 'lucide-react';
 import { Movimiento, MetodoPago, CategoriaGasto, ArqueoDiario } from '@/lib/supabase';
 import { db } from '@/lib/api';
@@ -41,9 +41,13 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const [gastos, setGastos] = useState<GastoRow[]>([
     { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' },
   ]);
+  const [extraMovimientos, setExtraMovimientos] = useState<Movimiento[]>([]);
   const [saving, setSaving] = useState(false);
+  const [loadingDia, setLoadingDia] = useState(false);
   const [ultimoArqueo, setUltimoArqueo] = useState<ArqueoDiario | null>(null);
   const [mostrarDetalle, setMostrarDetalle] = useState(false);
+  const [yaGuardado, setYaGuardado] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
 
@@ -57,24 +61,95 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const cartucheraArqueo = (a: ArqueoDiario) =>
     Number(a.bill_10000 ?? 0) + Number(a.bill_20000 ?? 0);
 
-  useEffect(() => {
-    const fetchUltimoArqueo = async () => {
-      const ayer = format(
-        new Date(new Date().setDate(new Date().getDate() - 1)),
-        'yyyy-MM-dd'
-      );
-      const arqueos = await db.getArqueosMes('2000-01-01', ayer);
-      const ultimo = arqueos
+  // ── Carga de datos al cambiar la fecha ──────────────────────────────
+  const loadDataForDate = useCallback(async (selectedFecha: string) => {
+    setLoadingDia(true);
+    try {
+      const [movs, arq, arqueosHistoricos] = await Promise.all([
+        db.getMovimientosDia(selectedFecha),
+        db.getArqueoDia(selectedFecha),
+        db.getArqueosMes('2000-01-01', selectedFecha),
+      ]);
+
+      // Buscar último arqueo previo a la fecha seleccionada
+      const previo = arqueosHistoricos
         .filter(a =>
-          a.bill_100 != null || a.bill_200 != null ||
-          a.bill_500 != null || a.bill_1000 != null || a.bill_2000 != null
+          a.fecha < selectedFecha &&
+          (a.bill_100 != null || a.bill_200 != null ||
+           a.bill_500 != null || a.bill_1000 != null || a.bill_2000 != null)
         )
         .sort((a, b) => b.fecha.localeCompare(a.fecha))[0] ?? null;
-      setUltimoArqueo(ultimo);
-    };
-    fetchUltimoArqueo();
+      setUltimoArqueo(previo);
+
+      const tieneDatos = (movs && movs.length > 0) || arq !== null;
+      setYaGuardado(tieneDatos);
+
+      if (tieneDatos) {
+        // Cargar cobros del sistema
+        const cMP = movs.find(m => m.concepto === 'Cobro MP' && Number(m.entrada) > 0);
+        const cEf = movs.find(m => m.concepto === 'Cobro Efectivo' && Number(m.entrada) > 0);
+        const cDeb = movs.find(m => m.concepto === 'Cobro Débito' && Number(m.entrada) > 0);
+        const cCred = movs.find(m => m.concepto === 'Cobro Crédito' && Number(m.entrada) > 0);
+
+        setCobroMP(cMP ? String(Number(cMP.entrada)) : '');
+        setCobroEfectivo(cEf ? String(Number(cEf.entrada)) : '');
+        setCobroDebito(cDeb ? String(Number(cDeb.entrada)) : '');
+        setCobroCredito(cCred ? String(Number(cCred.entrada)) : '');
+
+        // Cargar gastos (salidas)
+        const gastosDelDia = movs.filter(m => Number(m.salida) > 0);
+        if (gastosDelDia.length > 0) {
+          setGastos(gastosDelDia.map(g => ({
+            concept: g.concepto,
+            amount: String(Number(g.salida)),
+            method: g.metodo,
+            category: g.categoria || 'OPERATIVO',
+          })));
+        } else {
+          setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }]);
+        }
+
+        // Preservar movimientos extras (ingresos que no son los 4 cobros estándar)
+        const cobrosConceptos = ['Cobro MP', 'Cobro Efectivo', 'Cobro Débito', 'Cobro Crédito'];
+        const extras = movs.filter(m => Number(m.entrada) > 0 && !cobrosConceptos.includes(m.concepto));
+        setExtraMovimientos(extras);
+
+        // Cargar billetes del arqueo
+        if (arq) {
+          setQty100(arq.bill_100 ? String(Number(arq.bill_100) / 100) : '');
+          setQty200(arq.bill_200 ? String(Number(arq.bill_200) / 200) : '');
+          setQty500(arq.bill_500 ? String(Number(arq.bill_500) / 500) : '');
+          setQty1000(arq.bill_1000 ? String(Number(arq.bill_1000) / 1000) : '');
+          setQty2000(arq.bill_2000 ? String(Number(arq.bill_2000) / 2000) : '');
+          setQty10000(arq.bill_10000 ? String(Number(arq.bill_10000) / 10000) : '');
+          setQty20000(arq.bill_20000 ? String(Number(arq.bill_20000) / 20000) : '');
+        } else {
+          setQty100(''); setQty200(''); setQty500(''); setQty1000(''); setQty2000('');
+          setQty10000(''); setQty20000('');
+        }
+      } else {
+        // Formulario limpio para día nuevo
+        setCobroMP('');
+        setCobroEfectivo('');
+        setCobroDebito('');
+        setCobroCredito('');
+        setQty100(''); setQty200(''); setQty500(''); setQty1000(''); setQty2000('');
+        setQty10000(''); setQty20000('');
+        setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }]);
+        setExtraMovimientos([]);
+      }
+    } catch (err) {
+      console.error('Error al cargar datos del día:', err);
+    } finally {
+      setLoadingDia(false);
+    }
   }, []);
 
+  useEffect(() => {
+    loadDataForDate(fecha);
+  }, [fecha, loadDataForDate]);
+
+  // ── Cálculos ───────────────────────────────────────────────────────
   const totalCobrado = n(cobroMP) + n(cobroEfectivo) + n(cobroDebito) + n(cobroCredito);
   const totalBanco = n(cobroDebito) + n(cobroCredito);
 
@@ -87,18 +162,27 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const val20000 = n(qty20000) * 20000;
   const cajaFuerteTotal = val10000 + val20000;
   const totalContado = val100 + val200 + val500 + val1000 + val2000 + cajaFuerteTotal;
+
   const gastosEfectivoHoy = gastos
-  .filter(g => g.method === 'Efectivo' && n(g.amount) > 0)
-  .reduce((s, g) => s + n(g.amount), 0);
+    .filter(g => g.method === 'Efectivo' && n(g.amount) > 0)
+    .reduce((s, g) => s + n(g.amount), 0);
 
-const cajaChicaAnteriorMonto = ultimoArqueo ? cajaChicaArqueo(ultimoArqueo) : 0;
+  const cajaChicaAnteriorMonto = ultimoArqueo ? cajaChicaArqueo(ultimoArqueo) : 0;
+  const esperadoEfectivo = cajaChicaAnteriorMonto + n(cobroEfectivo) - gastosEfectivoHoy;
+  const difEfectivo = totalContado - esperadoEfectivo;
 
-const esperadoEfectivo = cajaChicaAnteriorMonto + n(cobroEfectivo) - gastosEfectivoHoy;
+  // ── Guardado ───────────────────────────────────────────────────────
+  const handleGuardarClick = () => {
+    if (yaGuardado) {
+      setShowConfirmModal(true);
+    } else {
+      ejecutarGuardado();
+    }
+  };
 
-const difEfectivo = totalContado - esperadoEfectivo;
-
-  const handleGuardar = async () => {
+  const ejecutarGuardado = async () => {
     setSaving(true);
+    setShowConfirmModal(false);
     try {
       await db.deleteMovimientosDia(fecha);
 
@@ -123,7 +207,17 @@ const difEfectivo = totalContado - esperadoEfectivo;
           categoria: g.category,
         }));
 
-      await db.insertMovimientos([...cobros, ...gastosRows]);
+      // Preservar movimientos extras que no son de los 4 cobros estándar
+      const extrasRows: Omit<Movimiento, 'id' | 'created_at'>[] = extraMovimientos.map(m => ({
+        fecha,
+        concepto: m.concepto,
+        entrada: Number(m.entrada),
+        salida: Number(m.salida),
+        metodo: m.metodo,
+        categoria: m.categoria,
+      }));
+
+      await db.insertMovimientos([...cobros, ...gastosRows, ...extrasRows]);
       await db.upsertArqueo({
         fecha,
         bill_100: val100,
@@ -136,6 +230,7 @@ const difEfectivo = totalContado - esperadoEfectivo;
         a_caja_fuerte: cajaFuerteTotal,
       });
 
+      setYaGuardado(true);
       onSave('¡Día guardado correctamente!');
     } catch (e) {
       console.error('Error al guardar:', e);
@@ -146,6 +241,7 @@ const difEfectivo = totalContado - esperadoEfectivo;
 
   return (
     <div className="animate-in fade-in duration-500">
+      {/* Header */}
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
@@ -154,14 +250,23 @@ const difEfectivo = totalContado - esperadoEfectivo;
           <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
             Cargá el día
           </h2>
-          <p className="mt-2 text-sm text-[#849083]">Completá los valores del cierre.</p>
+          <p className="mt-2 text-sm text-[#849083]">
+            {loadingDia ? 'Cargando datos de la fecha...' : 'Completá o modificá los valores del cierre.'}
+          </p>
         </div>
-        <input
-          type="date"
-          value={fecha}
-          onChange={e => setFecha(e.target.value)}
-          className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
-        />
+        <div className="flex items-center gap-2">
+          {yaGuardado && (
+            <span className="rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-3 py-2 text-xs font-bold text-[#3d6942]">
+              ✓ Día ya registrado
+            </span>
+          )}
+          <input
+            type="date"
+            value={fecha}
+            onChange={e => setFecha(e.target.value)}
+            className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
+          />
+        </div>
       </div>
 
       {/* ── Card último cierre caja chica ─────────────────────────── */}
@@ -485,22 +590,61 @@ const difEfectivo = totalContado - esperadoEfectivo;
             </div>
 
             <button
-              onClick={handleGuardar}
+              onClick={handleGuardarClick}
               disabled={saving}
               className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-[#d7e9c9] py-3.5 text-sm font-bold text-[#40562a] transition hover:bg-white disabled:opacity-60"
             >
-              {saving ? 'Guardando...' : 'Guardar el día'} <ArrowUpRight size={16} />
+              {saving ? 'Guardando...' : yaGuardado ? 'Actualizar el día' : 'Guardar el día'} <ArrowUpRight size={16} />
             </button>
           </div>
 
           <div className="flex gap-3 rounded-2xl border border-[#e3e9de] bg-white p-4">
             <ShieldCheck size={19} className="shrink-0 text-[#6a986c]" />
             <p className="text-xs leading-5 text-[#849083]">
-              Si ya cargaste este día, los datos se actualizan automáticamente. Nada se duplica.
+              Si ya cargaste este día, los datos se actualizarán de forma segura sin duplicar nada.
             </p>
           </div>
         </div>
       </div>
+
+      {/* ── Modal de Confirmación de Sobrescritura ─────────────────── */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-[#ba4a3a]">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#fdf0ee]">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#253729]">¿Sobrescribir datos del día?</h3>
+                <p className="text-xs text-[#849083]">
+                  {format(parseISO(fecha), "EEEE d 'de' MMMM", { locale: es })}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs leading-relaxed text-[#526b53]">
+              Ya existen cobros y arqueos registrados para esta fecha. Si continuás, se actualizarán los cobros y billetes con los valores actuales del formulario.
+            </p>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 rounded-xl border border-[#dfe7da] bg-white py-3 text-xs font-bold text-[#526b53] transition hover:bg-[#f5f5ec]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={ejecutarGuardado}
+                disabled={saving}
+                className="flex-1 rounded-xl bg-[#40562a] py-3 text-xs font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
+              >
+                {saving ? 'Guardando...' : 'Sí, actualizar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
