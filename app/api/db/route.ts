@@ -169,15 +169,26 @@ export async function POST(req: NextRequest) {
         return ok({ data });
       }
 
-      case 'deleteMovimientosDia': {
+            case 'deleteMovimientosDia': {
         if (!p.fecha) return err('Falta fecha');
 
-        const { error } = await supabase
+        // 1. Borrar movimientos del día
+        const resMovs = await supabase
           .from('movimientos')
           .delete()
           .eq('fecha', p.fecha as string);
 
-        if (error) throw error;
+        if (resMovs.error) throw resMovs.error;
+
+        // 2. Borrar diferencias de Efectivo de ese día para evitar duplicados al guardar de nuevo
+        const resDifs = await supabase
+          .from('diferencias_arqueo')
+          .delete()
+          .eq('fecha', p.fecha as string)
+          .eq('metodo', 'Efectivo');
+
+        if (resDifs.error) throw resDifs.error;
+
         return ok({ ok: true });
       }
 

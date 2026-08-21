@@ -184,6 +184,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
     setSaving(true);
     setShowConfirmModal(false);
     try {
+      // 1. Limpiar movimientos y diferencias de efectivo previas de esta fecha
       await db.deleteMovimientosDia(fecha);
 
       const cobros: Omit<Movimiento, 'id' | 'created_at'>[] = [];
@@ -196,6 +197,31 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
       if (n(cobroCredito) > 0)
         cobros.push({ fecha, concepto: 'Cobro Crédito', entrada: n(cobroCredito), salida: 0, metodo: 'Credito' });
 
+      // ── AJUSTE AUTOMÁTICO DE EFECTIVO CONTABLE (Opción B) ──
+      if (difEfectivo !== 0) {
+        if (difEfectivo < 0) {
+          // Faltante: se genera una salida para que el saldo de caja del sistema baje a la realidad
+          cobros.push({
+            fecha,
+            concepto: 'Ajuste Faltante de Caja Chica',
+            entrada: 0,
+            salida: Math.abs(difEfectivo),
+            metodo: 'Efectivo',
+            categoria: 'EXTRAORDINARIO', // Categoría correcta para pérdidas o imprevistos de caja
+          });
+        } else {
+          // Sobrante: se genera una entrada para que el saldo de caja del sistema suba a la realidad
+          cobros.push({
+            fecha,
+            concepto: 'Ajuste Sobrante de Caja Chica',
+            entrada: Math.abs(difEfectivo),
+            salida: 0,
+            metodo: 'Efectivo',
+            categoria: null,
+          });
+        }
+      }
+
       const gastosRows: Omit<Movimiento, 'id' | 'created_at'>[] = gastos
         .filter(g => g.concept.trim() && n(g.amount) > 0)
         .map(g => ({
@@ -207,7 +233,6 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
           categoria: g.category,
         }));
 
-      // Preservar movimientos extras que no son de los 4 cobros estándar
       const extrasRows: Omit<Movimiento, 'id' | 'created_at'>[] = extraMovimientos.map(m => ({
         fecha,
         concepto: m.concepto,
@@ -217,7 +242,10 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         categoria: m.categoria,
       }));
 
+      // Guardar todos los movimientos del día en la base de datos
       await db.insertMovimientos([...cobros, ...gastosRows, ...extrasRows]);
+
+      // Guardar el desglose de billetes físicos en arqueo_diario
       await db.upsertArqueo({
         fecha,
         bill_100: val100,
@@ -229,6 +257,18 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         bill_20000: val20000,
         a_caja_fuerte: cajaFuerteTotal,
       });
+
+      // ── REGISTRO DE AUDITORÍA HISTÓRICA (Opción A) ──
+      if (difEfectivo !== 0) {
+        await db.insertDiferencia({
+          fecha,
+          metodo: 'Efectivo',
+          monto: Math.abs(difEfectivo),
+          signo: difEfectivo > 0 ? 1 : -1,
+          tipo: 'diferencia_real',
+          observacion: 'Ajuste automático por arqueo físico de caja chica',
+        });
+      }
 
       setYaGuardado(true);
       onSave('¡Día guardado correctamente!');
