@@ -30,7 +30,6 @@ async function dbRequest<T>(
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'x-api-secret': process.env.NEXT_PUBLIC_API_SECRET!,
     },
     body: JSON.stringify({ action, payload }),
   });
