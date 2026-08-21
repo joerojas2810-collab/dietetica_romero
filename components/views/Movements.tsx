@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import {
-  ArrowDownLeft, ArrowUpRight, ClipboardList, Download,
-  Filter, Pencil, Search, Trash2,
+  Search, SlidersHorizontal, ArrowDownLeft, ArrowUpRight,
+  Trash2, Pencil, Download, AlertTriangle, X
 } from 'lucide-react';
 import { Movimiento } from '@/lib/supabase';
 import { db } from '@/lib/api';
@@ -14,44 +14,17 @@ import { es } from 'date-fns/locale';
 
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
 
-const METODO_LABEL: Record<string, string> = {
-  Efectivo: 'Efectivo',
-  Debito: 'Débito',
-  Credito: 'Crédito',
-  MercadoPago: 'MP',
-};
-
-const METODOS_FILTRO = ['Todos', 'Efectivo', 'Debito', 'Credito', 'MercadoPago'] as const;
-type FiltroMetodo = typeof METODOS_FILTRO[number];
-
-function exportarCSV(movimientos: Movimiento[]) {
-  const headers = ['Fecha', 'Concepto', 'Método', 'Categoría', 'Entrada', 'Salida'];
-  const rows = movimientos.map(m => [
-    m.fecha,
-    `"${m.concepto.replace(/"/g, '""')}"`,
-    m.metodo,
-    m.categoria || '',
-    Number(m.entrada) > 0 ? Number(m.entrada) : '',
-    Number(m.salida) > 0 ? Number(m.salida) : '',
-  ]);
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `movimientos_${format(new Date(), 'yyyy-MM')}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function Movements() {
-  const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-  const [search, setSearch] = useState('');
-  const [filtroMetodo, setFiltroMetodo] = useState<FiltroMetodo>('Todos');
   const [loading, setLoading] = useState(true);
   const [mes, setMes] = useState(mesActual);
+  const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
+  const [search, setSearch] = useState('');
+  const [metodoFiltro, setMetodoFiltro] = useState<string>('todos');
   const [editing, setEditing] = useState<Movimiento | null>(null);
-  const [showFiltros, setShowFiltros] = useState(false);
+
+  // Estados para modal de borrado seguro
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingConcept, setDeletingConcept] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
@@ -62,23 +35,32 @@ export default function Movements() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [mes]);
+  useEffect(() => {
+    fetchData();
+  }, [mes]);
 
-  const filtered = useMemo(() =>
-    movimientos.filter(m => {
-      const matchSearch = m.concepto.toLowerCase().includes(search.toLowerCase());
-      const matchMetodo = filtroMetodo === 'Todos' || m.metodo === filtroMetodo;
+  // Filtrado
+  const filtered = useMemo(() => {
+    return movimientos.filter(m => {
+      const matchSearch = m.concepto.toLowerCase().includes(search.toLowerCase()) ||
+                          (m.categoria && m.categoria.toLowerCase().includes(search.toLowerCase()));
+      const matchMetodo = metodoFiltro === 'todos' || m.metodo === metodoFiltro;
       return matchSearch && matchMetodo;
-    }),
-    [movimientos, search, filtroMetodo]
-  );
+    });
+  }, [movimientos, search, metodoFiltro]);
 
-  const totalEntradas = filtered.reduce((s, m) => s + Number(m.entrada), 0);
-  const totalSalidas = filtered.reduce((s, m) => s + Number(m.salida), 0);
+  // Borrado Seguro
+  const triggerDeleteConfirm = (id: string, concepto: string) => {
+    setDeletingId(id);
+    setDeletingConcept(concepto);
+  };
 
-  const handleDelete = async (id: string) => {
-    await db.deleteMovimiento(id);
-    setMovimientos(prev => prev.filter(m => m.id !== id));
+  const handleConfirmDelete = async () => {
+    if (!deletingId) return;
+    await db.deleteMovimiento(deletingId);
+    setDeletingId(null);
+    setDeletingConcept('');
+    fetchData();
   };
 
   const handleUpdate = async (updated: {
@@ -94,210 +76,161 @@ export default function Movements() {
     fetchData();
   };
 
+  // Exportar Filtrado a CSV
+  const handleExportCSV = () => {
+    if (filtered.length === 0) return;
+    let csv = '\uFEFF'; // UTF-8 BOM para Excel
+    csv += 'Fecha;Concepto;Método;Categoría;Entrada;Salida\n';
+    filtered.forEach(m => {
+      csv += `${m.fecha};"${m.concepto}";${m.metodo};${m.categoria || '—'};${m.entrada};${m.salida}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `movimientos_${mes.substring(0, 7)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (loading) return <div className="flex h-64 items-center justify-center text-[#849083]">Cargando movimientos...</div>;
+
   return (
     <div className="animate-in fade-in duration-500">
+      {/* Header */}
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
-            <ClipboardList size={14} /> Libro diario
-          </div>
-          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
-            Movimientos
-          </h2>
-          <p className="mt-2 text-sm text-[#849083]">Consultá y ordená toda la actividad.</p>
+          <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">Movimientos</h2>
+          <p className="mt-2 text-sm text-[#849083]">Lista de transacciones registradas.</p>
         </div>
-        <div className="flex gap-3">
-          <select
+        <div className="flex gap-2">
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] hover:bg-[#f5f5ec] transition"
+          >
+            <Download size={15} /> Exportar CSV
+          </button>
+          <input
+            type="date"
             value={mes}
             onChange={e => setMes(e.target.value)}
             className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
-          >
-            {Array.from({ length: 12 }, (_, i) => {
-              const d = new Date();
-              d.setMonth(d.getMonth() - i);
-              const val = format(startOfMonth(d), 'yyyy-MM-dd');
-              return (
-                <option key={val} value={val}>
-                  {format(d, 'MMMM yyyy', { locale: es })}
-                </option>
-              );
-            })}
-          </select>
-          <button
-            onClick={() => exportarCSV(filtered)}
-            className="flex items-center gap-2 rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] transition hover:bg-[#f2f5ef]"
-          >
-            <Download size={16} /> Exportar
-          </button>
+          />
         </div>
       </div>
 
-      <div className="rounded-3xl border border-[#e5eae1] bg-white shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-        {/* Barra de búsqueda y filtros */}
-        <div className="flex flex-col gap-3 border-b border-[#edf0eb] p-5 sm:p-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative w-full sm:max-w-xs">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9aa79a]" />
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Buscar concepto..."
-                className="h-10 w-full rounded-xl border border-[#e3e9e0] bg-[#fbfcfa] pl-9 pr-3 text-xs outline-none focus:border-[#9ab498]"
-              />
-            </div>
-            <button
-              onClick={() => setShowFiltros(!showFiltros)}
-              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                showFiltros || filtroMetodo !== 'Todos'
-                  ? 'border-[#40562a] bg-[#edf0e2] text-[#40562a]'
-                  : 'border-[#e2e8df] text-[#758475]'
-              }`}
-            >
-              <Filter size={14} /> Filtros
-              {filtroMetodo !== 'Todos' && (
-                <span className="ml-1 rounded-full bg-[#40562a] px-1.5 py-0.5 text-[9px] text-white">
-                  1
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* Filtro por método */}
-          {showFiltros && (
-            <div className="flex flex-wrap gap-2">
-              {METODOS_FILTRO.map(m => (
-                <button
-                  key={m}
-                  onClick={() => setFiltroMetodo(m)}
-                  className={`rounded-full px-3 py-1 text-[11px] font-semibold transition ${
-                    filtroMetodo === m
-                      ? 'bg-[#40562a] text-white'
-                      : 'bg-[#f0f4ed] text-[#748573] hover:bg-[#e5eae1]'
-                  }`}
-                >
-                  {m === 'Todos' ? 'Todos' : METODO_LABEL[m]}
-                </button>
-              ))}
-            </div>
-          )}
+      {/* Controles de Búsqueda y Filtro */}
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        <div className="relative col-span-2">
+          <Search size={15} className="absolute left-4 top-3.5 text-[#99a398]" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por concepto o categoría..."
+            className="w-full h-11 pl-11 pr-4 rounded-xl border border-[#e2e8df] bg-white text-sm outline-none focus:border-[#9ab498]"
+          />
         </div>
+        <select
+          value={metodoFiltro}
+          onChange={e => setMetodoFiltro(e.target.value)}
+          className="h-11 rounded-xl border border-[#e2e8df] bg-white px-4 text-xs font-semibold outline-none"
+        >
+          <option value="todos">Todos los Métodos</option>
+          <option value="Efectivo">Efectivo</option>
+          <option value="MercadoPago">MercadoPago</option>
+          <option value="Debito">Débito (Banco)</option>
+          <option value="Credito">Crédito (Banco)</option>
+        </select>
+      </div>
 
-        {loading ? (
-          <div className="flex h-48 items-center justify-center text-sm text-[#849083]">
-            Cargando...
-          </div>
+      {/* Listado de Movimientos */}
+      <div className="rounded-3xl border border-[#e5eae1] bg-white overflow-hidden shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
+        {filtered.length === 0 ? (
+          <div className="p-12 text-center text-sm text-[#849083]">Sin movimientos para mostrar.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-left">
-              <thead>
-                <tr className="border-b border-[#edf0eb] text-[10px] font-bold uppercase tracking-[0.15em] text-[#a0aba0]">
-                  <th className="px-6 py-4">Fecha</th>
-                  <th className="px-6 py-4">Concepto</th>
-                  <th className="px-6 py-4">Método</th>
-                  <th className="px-6 py-4">Categoría</th>
-                  <th className="px-6 py-4 text-right">Entrada</th>
-                  <th className="px-6 py-4 text-right">Salida</th>
-                  <th className="px-6 py-4" />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(m => (
-                  <tr
-                    key={m.id}
-                    className="border-b border-[#f0f2ee] transition hover:bg-[#fbfcfa]"
-                  >
-                    <td className="whitespace-nowrap px-6 py-4 text-xs text-[#899689]">
-                      {format(parseISO(m.fecha), 'd MMM yyyy', { locale: es })}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${
-                          m.entrada > 0
-                            ? 'bg-[#e5f1e2] text-[#619167]'
-                            : 'bg-[#f9ebe6] text-[#bd806d]'
-                        }`}>
-                          {m.entrada > 0
-                            ? <ArrowDownLeft size={14} />
-                            : <ArrowUpRight size={14} />}
-                        </span>
-                        <span className="text-xs font-semibold text-[#3c4e3e]">
-                          {m.concepto}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                        m.metodo === 'Credito'
-                          ? 'bg-[#f0e8f5] text-[#6b4d8a]'
-                          : m.metodo === 'Debito'
-                            ? 'bg-[#e5f1e2] text-[#3d6942]'
-                            : m.metodo === 'MercadoPago'
-                              ? 'bg-[#e0ecf8] text-[#2d5a8e]'
-                              : 'bg-[#fef4e2] text-[#8a6a2a]'
-                      }`}>
-                        {METODO_LABEL[m.metodo] ?? m.metodo}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-xs text-[#899689]">
-                      {m.categoria || '—'}
-                    </td>
-                    <td className="px-6 py-4 text-right text-xs font-bold text-[#56805b]">
-                      {m.entrada > 0 ? money(Number(m.entrada)) : '—'}
-                    </td>
-                    <td className="px-6 py-4 text-right text-xs font-bold text-[#ba7665]">
-                      {m.salida > 0 ? money(Number(m.salida)) : '—'}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setEditing(m)}
-                          className="text-[#a6b0a5] hover:text-[#40562a]"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(m.id!)}
-                          className="text-[#a6b0a5] hover:text-[#ba4a3a]"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-[#fbfcfa]">
-                  <td colSpan={4} className="px-6 py-4 text-xs font-bold text-[#708070]">
-                    {filtered.length} movimiento{filtered.length !== 1 ? 's' : ''}
-                    {filtroMetodo !== 'Todos' && ` · ${METODO_LABEL[filtroMetodo]}`}
-                  </td>
-                  <td className="px-6 py-4 text-right text-sm font-bold text-[#56805b]">
-                    {money(totalEntradas)}
-                  </td>
-                  <td className="px-6 py-4 text-right text-sm font-bold text-[#ba7665]">
-                    {money(totalSalidas)}
-                  </td>
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
-
-            {filtered.length === 0 && (
-              <div className="flex h-48 items-center justify-center text-sm text-[#849083]">
-                Sin movimientos para mostrar
-              </div>
-            )}
+          <div className="divide-y divide-[#f0f3ee]">
+            {filtered.map(m => {
+              const esEntrada = Number(m.entrada) > 0;
+              const esCartuchera = m.concepto.startsWith('Cartuchera:');
+              return (
+                <div key={m.id} className="flex items-center justify-between p-4 hover:bg-[#fcfdfb] transition">
+                  <div className="flex items-center gap-3">
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                      esEntrada ? 'bg-[#e5f1e2] text-[#3d6942]' : 'bg-[#fdf0ee] text-[#ba4a3a]'
+                    }`}>
+                      {esEntrada ? <ArrowDownLeft size={15} /> : <ArrowUpRight size={15} />}
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold text-[#253729]">
+                        {esCartuchera ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span className="text-[10px] bg-[#e3eae0] text-[#40562a] px-1.5 py-0.5 rounded-md font-bold">Cartuchera 🔒</span>
+                            {m.concepto.replace('Cartuchera: ', '')}
+                          </span>
+                        ) : m.concepto}
+                      </p>
+                      <p className="text-[10px] text-[#99a398] mt-0.5">
+                        {format(parseISO(m.fecha), "d 'de' MMMM", { locale: es })} · {m.metodo} · {m.categoria || 'Sin categoría'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs font-bold ${esEntrada ? 'text-[#3d6942]' : 'text-[#ba4a3a]'}`}>
+                      {esEntrada ? '+' : '-'}{money(esEntrada ? Number(m.entrada) : Number(m.salida))}
+                    </span>
+                    <button onClick={() => setEditing(m)} className="text-[#b5beb4] hover:text-[#40562a] transition">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => triggerDeleteConfirm(m.id!, m.concepto)} className="text-[#b5beb4] hover:text-[#ba4a3a] transition">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
       {editing && (
-        <EditMovimientoModal
-          movimiento={editing}
-          onSave={handleUpdate}
-          onClose={() => setEditing(null)}
-        />
+        <EditMovimientoModal movimiento={editing} onSave={handleUpdate} onClose={() => setEditing(null)} />
+      )}
+
+      {/* ── Modal de Confirmación de Borrado Seguro ─────────────────── */}
+      {deletingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-sm rounded-3xl border border-[#e5eae1] bg-white p-5 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex gap-3 text-[#ba4a3a]">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#fdf0ee]">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-[#253729] truncate">¿Borrar movimiento?</h3>
+                <p className="text-xs text-[#849083] truncate mt-0.5">{deletingConcept}</p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs leading-relaxed text-[#526b53]">
+              Esta acción no se puede deshacer. Se descontará permanentemente del historial del mes y afectará el balance de tu Dashboard de forma inmediata.
+            </p>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => setDeletingId(null)}
+                className="flex-1 rounded-xl border border-[#dfe7da] bg-white py-2.5 text-xs font-bold text-[#526b53] transition hover:bg-[#f5f5ec]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 rounded-xl bg-[#ba4a3a] py-2.5 text-xs font-bold text-white transition hover:bg-[#96372a]"
+              >
+                Sí, borrar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

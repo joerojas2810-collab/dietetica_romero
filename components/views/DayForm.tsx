@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   ArrowUpRight, CalendarDays, CirclePlus, Cloud,
   Receipt, ShieldCheck, Sparkles, Trash2, CreditCard,
-  ChevronDown, ChevronUp, AlertTriangle,
+  ChevronDown, ChevronUp, AlertTriangle, Wallet, Lock,
 } from 'lucide-react';
 import { Movimiento, MetodoPago, CategoriaGasto, ArqueoDiario } from '@/lib/supabase';
 import { db } from '@/lib/api';
@@ -23,6 +23,7 @@ interface GastoRow {
   amount: string;
   method: MetodoPago;
   category: CategoriaGasto;
+  origenEfectivo: 'CajaChica' | 'Cartuchera'; // 👈 NUEVO
 }
 
 export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
@@ -39,7 +40,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const [qty10000, setQty10000] = useState('');
   const [qty20000, setQty20000] = useState('');
   const [gastos, setGastos] = useState<GastoRow[]>([
-    { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' },
+    { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO', origenEfectivo: 'CajaChica' },
   ]);
   const [extraMovimientos, setExtraMovimientos] = useState<Movimiento[]>([]);
   const [saving, setSaving] = useState(false);
@@ -71,7 +72,6 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         db.getArqueosMes('2000-01-01', selectedFecha),
       ]);
 
-      // Buscar último arqueo previo a la fecha seleccionada
       const previo = arqueosHistoricos
         .filter(a =>
           a.fecha < selectedFecha &&
@@ -85,7 +85,6 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
       setYaGuardado(tieneDatos);
 
       if (tieneDatos) {
-        // Cargar cobros del sistema
         const cMP = movs.find(m => m.concepto === 'Cobro MP' && Number(m.entrada) > 0);
         const cEf = movs.find(m => m.concepto === 'Cobro Efectivo' && Number(m.entrada) > 0);
         const cDeb = movs.find(m => m.concepto === 'Cobro Débito' && Number(m.entrada) > 0);
@@ -96,25 +95,27 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         setCobroDebito(cDeb ? String(Number(cDeb.entrada)) : '');
         setCobroCredito(cCred ? String(Number(cCred.entrada)) : '');
 
-        // Cargar gastos (salidas)
+        // Cargar gastos mapeando el prefijo "Cartuchera: "
         const gastosDelDia = movs.filter(m => Number(m.salida) > 0);
         if (gastosDelDia.length > 0) {
-          setGastos(gastosDelDia.map(g => ({
-            concept: g.concepto,
-            amount: String(Number(g.salida)),
-            method: g.metodo,
-            category: g.categoria || 'OPERATIVO',
-          })));
+          setGastos(gastosDelDia.map(g => {
+            const esCartuchera = g.concepto.startsWith('Cartuchera: ');
+            return {
+              concept: esCartuchera ? g.concepto.replace('Cartuchera: ', '') : g.concepto,
+              amount: String(Number(g.salida)),
+              method: g.metodo,
+              category: g.categoria || 'OPERATIVO',
+              origenEfectivo: esCartuchera ? 'Cartuchera' : 'CajaChica',
+            };
+          }));
         } else {
-          setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }]);
+          setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO', origenEfectivo: 'CajaChica' }]);
         }
 
-        // Preservar movimientos extras (ingresos que no son los 4 cobros estándar)
-        const cobrosConceptos = ['Cobro MP', 'Cobro Efectivo', 'Cobro Débito', 'Cobro Crédito'];
+        const cobrosConceptos = ['Cobro MP', 'Cobro Efectivo', 'Cobro Débito', 'Cobro Crédito', 'Ajuste Faltante de Caja Chica', 'Ajuste Sobrante de Caja Chica'];
         const extras = movs.filter(m => Number(m.entrada) > 0 && !cobrosConceptos.includes(m.concepto));
         setExtraMovimientos(extras);
 
-        // Cargar billetes del arqueo
         if (arq) {
           setQty100(arq.bill_100 ? String(Number(arq.bill_100) / 100) : '');
           setQty200(arq.bill_200 ? String(Number(arq.bill_200) / 200) : '');
@@ -128,14 +129,13 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
           setQty10000(''); setQty20000('');
         }
       } else {
-        // Formulario limpio para día nuevo
         setCobroMP('');
         setCobroEfectivo('');
         setCobroDebito('');
         setCobroCredito('');
         setQty100(''); setQty200(''); setQty500(''); setQty1000(''); setQty2000('');
         setQty10000(''); setQty20000('');
-        setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }]);
+        setGastos([{ concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO', origenEfectivo: 'CajaChica' }]);
         setExtraMovimientos([]);
       }
     } catch (err) {
@@ -163,12 +163,13 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
   const cajaFuerteTotal = val10000 + val20000;
   const totalContado = val100 + val200 + val500 + val1000 + val2000 + cajaFuerteTotal;
 
-  const gastosEfectivoHoy = gastos
-    .filter(g => g.method === 'Efectivo' && n(g.amount) > 0)
+  // 👈 CORRECCIÓN: Solo restamos gastos que salieron de la Caja Chica
+  const gastosCajaChicaHoy = gastos
+    .filter(g => g.method === 'Efectivo' && g.origenEfectivo === 'CajaChica' && n(g.amount) > 0)
     .reduce((s, g) => s + n(g.amount), 0);
 
   const cajaChicaAnteriorMonto = ultimoArqueo ? cajaChicaArqueo(ultimoArqueo) : 0;
-  const esperadoEfectivo = cajaChicaAnteriorMonto + n(cobroEfectivo) - gastosEfectivoHoy;
+  const esperadoEfectivo = cajaChicaAnteriorMonto + n(cobroEfectivo) - gastosCajaChicaHoy;
   const difEfectivo = totalContado - esperadoEfectivo;
 
   // ── Guardado ───────────────────────────────────────────────────────
@@ -184,7 +185,6 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
     setSaving(true);
     setShowConfirmModal(false);
     try {
-      // 1. Limpiar movimientos y diferencias de efectivo previas de esta fecha
       await db.deleteMovimientosDia(fecha);
 
       const cobros: Omit<Movimiento, 'id' | 'created_at'>[] = [];
@@ -197,20 +197,18 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
       if (n(cobroCredito) > 0)
         cobros.push({ fecha, concepto: 'Cobro Crédito', entrada: n(cobroCredito), salida: 0, metodo: 'Credito' });
 
-      // ── AJUSTE AUTOMÁTICO DE EFECTIVO CONTABLE (Opción B) ──
+      // Ajustes automáticos por diferencias de Caja Chica
       if (difEfectivo !== 0) {
         if (difEfectivo < 0) {
-          // Faltante: se genera una salida para que el saldo de caja del sistema baje a la realidad
           cobros.push({
             fecha,
             concepto: 'Ajuste Faltante de Caja Chica',
             entrada: 0,
             salida: Math.abs(difEfectivo),
             metodo: 'Efectivo',
-            categoria: 'EXTRAORDINARIO', // Categoría correcta para pérdidas o imprevistos de caja
+            categoria: 'EXTRAORDINARIO',
           });
         } else {
-          // Sobrante: se genera una entrada para que el saldo de caja del sistema suba a la realidad
           cobros.push({
             fecha,
             concepto: 'Ajuste Sobrante de Caja Chica',
@@ -222,16 +220,22 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         }
       }
 
+      // Procesar gastos aplicando prefijo "Cartuchera: " si corresponde
       const gastosRows: Omit<Movimiento, 'id' | 'created_at'>[] = gastos
         .filter(g => g.concept.trim() && n(g.amount) > 0)
-        .map(g => ({
-          fecha,
-          concepto: g.concept,
-          entrada: 0,
-          salida: n(g.amount),
-          metodo: g.method,
-          categoria: g.category,
-        }));
+        .map(g => {
+          const conceptoFinal = g.method === 'Efectivo' && g.origenEfectivo === 'Cartuchera'
+            ? `Cartuchera: ${g.concept.trim()}`
+            : g.concept.trim();
+          return {
+            fecha,
+            concepto: conceptoFinal,
+            entrada: 0,
+            salida: n(g.amount),
+            metodo: g.method,
+            categoria: g.category,
+          };
+        });
 
       const extrasRows: Omit<Movimiento, 'id' | 'created_at'>[] = extraMovimientos.map(m => ({
         fecha,
@@ -242,10 +246,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         categoria: m.categoria,
       }));
 
-      // Guardar todos los movimientos del día en la base de datos
       await db.insertMovimientos([...cobros, ...gastosRows, ...extrasRows]);
-
-      // Guardar el desglose de billetes físicos en arqueo_diario
       await db.upsertArqueo({
         fecha,
         bill_100: val100,
@@ -258,7 +259,6 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
         a_caja_fuerte: cajaFuerteTotal,
       });
 
-      // ── REGISTRO DE AUDITORÍA HISTÓRICA (Opción A) ──
       if (difEfectivo !== 0) {
         await db.insertDiferencia({
           fecha,
@@ -506,7 +506,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
               {gastos.map((row, i) => (
                 <div
                   key={i}
-                  className="grid gap-2 rounded-xl border border-[#e8ede5] bg-[#fbfcfa] p-3 sm:grid-cols-[1.3fr_0.7fr_0.8fr_0.9fr_auto] sm:items-center sm:border-0 sm:bg-transparent sm:p-0"
+                  className="grid gap-2 rounded-xl border border-[#e8ede5] bg-[#fbfcfa] p-3 sm:grid-cols-[1.2fr_0.6fr_0.8fr_0.8fr_0.7fr_auto] sm:items-center sm:border-0 sm:bg-transparent sm:p-0"
                 >
                   <input
                     value={row.concept}
@@ -543,6 +543,25 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
                     <option value="Debito">Débito (Banco)</option>
                     <option value="Credito">Crédito (Banco)</option>
                   </select>
+                  
+                  {/* Selector Origen Efectivo (Solo visible si el método es Efectivo) */}
+                  {row.method === 'Efectivo' ? (
+                    <select
+                      value={row.origenEfectivo}
+                      onChange={e =>
+                        setGastos(gastos.map((g, j) =>
+                          j === i ? { ...g, origenEfectivo: e.target.value as 'CajaChica' | 'Cartuchera' } : g
+                        ))
+                      }
+                      className="h-11 rounded-lg border border-[#c8dcc3] bg-[#f3f8f2] px-3 text-[10px] font-bold text-[#40562a] outline-none"
+                    >
+                      <option value="CajaChica">Caja Chica 🪙</option>
+                      <option value="Cartuchera">Cartuchera 🔒</option>
+                    </select>
+                  ) : (
+                    <div className="hidden h-11 sm:block bg-transparent" />
+                  )}
+
                   <select
                     value={row.category}
                     onChange={e =>
@@ -571,7 +590,7 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
             </div>
             <button
               onClick={() =>
-                setGastos([...gastos, { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO' }])
+                setGastos([...gastos, { concept: '', amount: '', method: 'Efectivo', category: 'OPERATIVO', origenEfectivo: 'CajaChica' }])
               }
               className="mt-4 flex items-center gap-2 text-xs font-bold text-[#527758] hover:text-[#40562a]"
             >
@@ -621,12 +640,27 @@ export default function DayForm({ onSave }: { onSave: (msg: string) => void }) {
               )}
 
               <div className="h-px bg-white/10" />
-              <div className="flex justify-between">
-                <span className="text-[#c5d8c1]">Gastos cargados</span>
+              <div className="flex justify-between text-[#c5d8c1]">
+                <span>Gastos cargados</span>
                 <span className="font-bold">
                   {gastos.filter(g => n(g.amount) > 0).length}
                 </span>
               </div>
+              
+              {/* Desglose de Gastos por Origen */}
+              {gastos.some(g => g.method === 'Efectivo' && g.origenEfectivo === 'Cartuchera' && n(g.amount) > 0) && (
+                <div className="mt-2 rounded-xl bg-white/10 p-2 text-[11px] text-[#c0d7bd]">
+                  <p className="font-bold uppercase tracking-wider text-[9px] mb-1">Egresos Efectivo:</p>
+                  <div className="flex justify-between">
+                    <span>De Caja Chica:</span>
+                    <span>{money(gastosCajaChicaHoy)}</span>
+                  </div>
+                  <div className="flex justify-between mt-0.5">
+                    <span>De Cartuchera:</span>
+                    <span>{money(gastos.filter(g => g.method === 'Efectivo' && g.origenEfectivo === 'Cartuchera').reduce((s,g) => s + n(g.amount), 0))}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <button

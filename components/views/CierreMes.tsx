@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Cloud, PiggyBank, Receipt, Building2, LockKeyhole } from 'lucide-react';
+import {
+  CalendarRange, ShieldAlert, Sparkles, ArrowRightLeft,
+  Coins, CreditCard, Smartphone, ShieldCheck, CheckCircle2
+} from 'lucide-react';
 import { db } from '@/lib/api';
 import { money } from '@/lib/helpers';
-import CreditCardIcon from '@/components/shared/CreditCardIcon';
-import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, parseISO, addMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 const mesActual = format(startOfMonth(new Date()), 'yyyy-MM-dd');
@@ -14,153 +16,132 @@ export default function CierreMes() {
   const [mes, setMes] = useState(mesActual);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [yaExiste, setYaExiste] = useState(false);
+  const [success, setSuccess] = useState(false);
 
-  // Aperturas del mes
-  const [aperturas, setAperturas] = useState({
-    caja_chica: 0,
-    cartuchera: 0,
-    banco: 0,
-    mp: 0,
-  });
+  // Valores sugeridos calculados automáticamente
+  const [sugCajaChica, setSugCajaChica] = useState(0);
+  const [sugCartuchera, setSugCartuchera] = useState(0);
+  const [sugBanco, setSugBanco] = useState(0);
+  const [sugMP, setSugMP] = useState(0);
 
-  // Saldos finales calculados
-  const [saldos, setSaldos] = useState({
-    caja_chica: 0,
-    cartuchera: 0,
-    banco: 0,
-    mp: 0,
-  });
+  // Inputs editables por el usuario
+  const [cajaChica, setCajaChica] = useState('');
+  const [cartuchera, setCartuchera] = useState('');
+  const [banco, setBanco] = useState('');
+  const [mercadopago, setMercadopago] = useState('');
 
-  const [totalEntradas, setTotalEntradas] = useState(0);
-  const [totalSalidas, setTotalSalidas] = useState(0);
+  const n = (v: string) => parseFloat(v.replace(/\./g, '').replace(',', '.')) || 0;
 
   useEffect(() => {
-    const fetchData = async () => {
+    const calcularPropuestas = async () => {
       setLoading(true);
-      setSaved(false);
+      setSuccess(false);
+      try {
+        const inicio = format(startOfMonth(parseISO(mes)), 'yyyy-MM-dd');
+        const fin = format(endOfMonth(parseISO(mes)), 'yyyy-MM-dd');
 
-      const fechaBase = parseISO(mes);
-      const inicio = format(startOfMonth(fechaBase), 'yyyy-MM-dd');
-      const fin = format(endOfMonth(fechaBase), 'yyyy-MM-dd');
-      const mesSiguiente = format(
-        startOfMonth(new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1)),
-        'yyyy-MM-dd'
-      );
+        // 1. Obtener la apertura inicial cargada de este mes
+        const ap = await db.getSaldoApertura(inicio);
+        const apCajaChica = Number(ap?.caja_chica ?? ap?.efectivo ?? 0);
+        const apCartuchera = Number(ap?.cartuchera ?? 0);
+        const apBanco = Number(ap?.banco ?? ap?.debito ?? 0);
+        const apMP = Number(ap?.mercadopago ?? 0);
 
-      const [movs, apertura, existente, arqueos] = await Promise.all([
-        db.getMovimientosMes(inicio, fin),
-        db.getSaldoApertura(mes),
-        db.getSaldoApertura(mesSiguiente),
-        db.getArqueosMes(inicio, fin),
-      ]);
+        // 2. Obtener arqueos y movimientos para calcular arrastres reales
+        const [movs, arqueos] = await Promise.all([
+          db.getMovimientosMes(inicio, fin),
+          db.getArqueosMes(inicio, fin),
+        ]);
 
-      // Aperturas del mes
-      const apCajaChica = Number(apertura?.caja_chica || apertura?.efectivo || 0);
-      const apCartuchera = Number(apertura?.cartuchera || 0);
-      const apBanco = Number(apertura?.banco || apertura?.debito || 0);
-      const apMP = Number(apertura?.mercadopago || 0);
+        // 🪙 Caja Chica Arrastre Real
+        // Solo restamos salidas de Efectivo comunes (que no dicen "Cartuchera:")
+        const entradasEf = movs.filter(m => m.metodo === 'Efectivo').reduce((s, m) => s + Number(m.entrada), 0);
+        const salidasEfCaja = movs.filter(m => m.metodo === 'Efectivo' && !m.concepto.startsWith('Cartuchera:')).reduce((s, m) => s + Number(m.salida), 0);
+        const calcCaja = apCajaChica + entradasEf - salidasEfCaja;
 
-      setAperturas({
-        caja_chica: apCajaChica,
-        cartuchera: apCartuchera,
-        banco: apBanco,
-        mp: apMP,
-      });
+        // 🔒 Cartuchera Arrastre Real
+        // Suma envíos diarios de arqueo y resta gastos de cartuchera
+        const enviosCartuchera = arqueos.reduce((s, a) => s + Number(a.a_caja_fuerte ?? 0), 0);
+        const salidasCartuchera = movs.filter(m => m.metodo === 'Efectivo' && m.concepto.startsWith('Cartuchera:')).reduce((s, m) => s + Number(m.salida), 0);
+        const calcCartu = apCartuchera + enviosCartuchera - salidasCartuchera;
 
-      // Movimientos del mes por cuenta real
-      // Efectivo → caja chica
-      const movCajaChica = movs
-        .filter(m => m.metodo === 'Efectivo')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+        // 💳 Banco Arrastre Real
+        const entradasBanco = movs.filter(m => m.metodo === 'Debito' || m.metodo === 'Credito').reduce((s, m) => s + Number(m.entrada), 0);
+        const salidasBanco = movs.filter(m => m.metodo === 'Debito' || m.metodo === 'Credito').reduce((s, m) => s + Number(m.salida), 0);
+        const calcBan = apBanco + entradasBanco - salidasBanco;
 
-      // Banco → Débito + Crédito
-      const movBanco = movs
-        .filter(m => m.metodo === 'Debito' || m.metodo === 'Credito')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+        // 📱 MercadoPago Arrastre Real
+        const entradasMP = movs.filter(m => m.metodo === 'MercadoPago').reduce((s, m) => s + Number(m.entrada), 0);
+        const salidasMP = movs.filter(m => m.metodo === 'MercadoPago').reduce((s, m) => s + Number(m.salida), 0);
+        const calcM = apMP + entradasMP - salidasMP;
 
-      // MP
-      const movMP = movs
-        .filter(m => m.metodo === 'MercadoPago')
-        .reduce((s, m) => s + Number(m.entrada) - Number(m.salida), 0);
+        // Seteamos las propuestas en pantalla
+        setSugCajaChica(calcCaja);
+        setSugCartuchera(calcCartu);
+        setSugBanco(calcBan);
+        setSugMP(calcM);
 
-      // Cartuchera → suma acumulada de a_caja_fuerte del mes
-      const totalCartucheraEnviada = arqueos
-        .reduce((s, a) => s + Number(a.a_caja_fuerte || 0), 0);
+        // Inicializamos los inputs editables con las propuestas sugeridas
+        setCajaChica(String(calcCaja));
+        setCartuchera(String(calcCartu));
+        setBanco(String(calcBan));
+        setMercadopago(String(calcM));
 
-      setSaldos({
-        caja_chica: apCajaChica + movCajaChica,
-        cartuchera: apCartuchera + totalCartucheraEnviada,
-        banco: apBanco + movBanco,
-        mp: apMP + movMP,
-      });
-
-      setTotalEntradas(movs.reduce((s, m) => s + Number(m.entrada), 0));
-      setTotalSalidas(movs.reduce((s, m) => s + Number(m.salida), 0));
-      setYaExiste(!!existente);
-      setLoading(false);
+      } catch (err) {
+        console.error('Error al calcular el asistente de cierre:', err);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    fetchData();
+    calcularPropuestas();
   }, [mes]);
 
-  const resultado = totalEntradas - totalSalidas;
-  const aperturaTotal = Object.values(aperturas).reduce((a, b) => a + b, 0);
-  const saldoTotal = Object.values(saldos).reduce((a, b) => a + b, 0);
-
-  const handleCerrar = async () => {
+  const handleCierre = async () => {
     setSaving(true);
-    const fechaBase = parseISO(mes);
-    const mesSiguiente = format(
-      startOfMonth(new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1)),
-      'yyyy-MM-dd'
-    );
+    try {
+      // Calcular la fecha del 1 de mes del periodo entrante
+      const proximoPeriodo = format(addMonths(parseISO(mes), 1), 'yyyy-MM-dd');
 
-    await db.upsertSaldoApertura({
-      periodo: mesSiguiente,
-      // Campos legacy (compatibilidad)
-      efectivo: saldos.caja_chica,
-      debito: saldos.banco,
-      mercadopago: saldos.mp,
-      // Campos nuevos
-      caja_chica: saldos.caja_chica,
-      cartuchera: saldos.cartuchera,
-      banco: saldos.banco,
-    });
+      await db.upsertSaldoApertura({
+        periodo: proximoPeriodo,
+        caja_chica: n(cajaChica),
+        cartuchera: n(cartuchera),
+        banco: n(banco),
+        mercadopago: n(mercadopago),
+        efectivo: n(cajaChica), // Legacy
+        debito: n(banco), // Legacy
+      });
 
-    setSaving(false);
-    setSaved(true);
-    setYaExiste(true);
+      setSuccess(true);
+    } catch (err) {
+      console.error('Error guardando apertura del mes entrante:', err);
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const mesSiguienteTexto = format(addMonths(parseISO(mes), 1), 'MMMM yyyy', { locale: es });
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center text-[#849083]">
-      Cargando...
+      Calculando saldos recomendados de cierre...
     </div>
   );
 
-  const fechaBase = parseISO(mes);
-  const mesNombre = format(fechaBase, 'MMMM yyyy', { locale: es });
-  const mesSigNombre = format(
-    new Date(fechaBase.getFullYear(), fechaBase.getMonth() + 1, 1),
-    'MMMM yyyy',
-    { locale: es }
-  );
-
   return (
-    <div className="animate-in fade-in duration-500">
+    <div className="animate-in fade-in duration-500 max-w-xl">
       {/* Header */}
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#5d713c]">
-            <PiggyBank size={14} /> Cierre mensual
+            <CalendarRange size={14} /> Asistente contable
           </div>
           <h2 className="text-3xl font-bold tracking-[-0.05em] text-[#253729] sm:text-[38px]">
-            Cierre de mes
+            Cierre de Mes
           </h2>
           <p className="mt-2 text-sm text-[#849083]">
-            Revisá los saldos finales y trasladarlos como apertura del mes siguiente.
+            Traspaso automático de caja y saldos para el mes entrante.
           </p>
         </div>
         <select
@@ -168,7 +149,7 @@ export default function CierreMes() {
           onChange={e => setMes(e.target.value)}
           className="rounded-xl border border-[#dfe7da] bg-white px-4 py-3 text-sm font-semibold text-[#526b53] outline-none"
         >
-          {Array.from({ length: 12 }, (_, i) => {
+          {Array.from({ length: 6 }, (_, i) => {
             const d = new Date();
             d.setMonth(d.getMonth() - i);
             const val = format(startOfMonth(d), 'yyyy-MM-dd');
@@ -181,137 +162,108 @@ export default function CierreMes() {
         </select>
       </div>
 
-      <div className="max-w-xl space-y-5">
-
-        {/* ── RESUMEN DEL MES ────────────────────────────────────────── */}
-        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          <p className="mb-4 text-sm font-bold">Resumen de {mesNombre}</p>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
-              <span className="text-xs font-medium text-[#40562a]">Apertura del mes</span>
-              <span className="text-sm font-bold text-[#40562a]">{money(aperturaTotal)}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-xl bg-[#e5f1e2] px-4 py-3">
-              <span className="text-xs font-medium text-[#3d6942]">Total entradas</span>
-              <span className="text-sm font-bold text-[#3d6942]">+{money(totalEntradas)}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-xl bg-[#f9ebe6] px-4 py-3">
-              <span className="text-xs font-medium text-[#ba7665]">Total salidas</span>
-              <span className="text-sm font-bold text-[#ba7665]">-{money(totalSalidas)}</span>
-            </div>
-            <div className="border-t border-dashed border-[#e5eae1]" />
-            <div className="flex items-center justify-between rounded-xl bg-[#f5f5ec] px-4 py-3">
-              <span className="text-xs font-semibold text-[#40562a]">Resultado del mes</span>
-              <span className={`text-lg font-bold ${resultado >= 0 ? 'text-[#3d6942]' : 'text-[#ba4a3a]'}`}>
-                {resultado >= 0 ? '+' : ''}{money(resultado)}
-              </span>
-            </div>
+      <div className="space-y-5">
+        
+        {/* Info Box */}
+        <div className="flex gap-3 rounded-2xl border border-[#c9ddc5] bg-[#eff8ed] p-4 text-xs text-[#3d6942]">
+          <Sparkles size={18} className="shrink-0 text-[#6a986c]" />
+          <div>
+            <p className="font-bold">✨ Asistente de cálculo inteligente activo</p>
+            <p className="mt-1 leading-5">
+              Analizamos todas las entradas, salidas, arqueos y comisiones registradas en {format(parseISO(mes), 'MMMM', { locale: es })}. Los montos recomendados se colocaron de forma automática.
+            </p>
           </div>
         </div>
 
-        {/* ── SALDOS FINALES POR CUENTA ──────────────────────────────── */}
-        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          <p className="mb-1 text-sm font-bold">Saldos finales por cuenta</p>
-          <p className="mb-4 text-[11px] text-[#99a398]">
-            Se trasladarán como apertura de {mesSigNombre}
+        {/* Panel de saldos recomendados y editables */}
+        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)] space-y-4">
+          <p className="text-sm font-bold text-[#253729]">Aperturas propuestas para {mesSiguienteTexto}</p>
+
+          {/* Caja Chica */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold text-[#849083]">
+              <span className="flex items-center gap-1"><Coins size={13} /> Caja Chica sugerida</span>
+              <span className="text-[#40562a] font-bold">{money(sugCajaChica)}</span>
+            </div>
+            <input
+              type="text"
+              value={cajaChica}
+              onChange={e => setCajaChica(e.target.value)}
+              placeholder="0"
+              className="w-full h-11 rounded-xl border border-[#e2e8df] bg-white px-3 text-sm font-semibold outline-none focus:border-[#9ab498]"
+            />
+          </div>
+
+          {/* Cartuchera */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold text-[#849083]">
+              <span className="flex items-center gap-1"><ArrowRightLeft size={13} /> Cartuchera sugerida</span>
+              <span className="text-[#40562a] font-bold">{money(sugCartuchera)}</span>
+            </div>
+            <input
+              type="text"
+              value={cartuchera}
+              onChange={e => setCartuchera(e.target.value)}
+              placeholder="0"
+              className="w-full h-11 rounded-xl border border-[#e2e8df] bg-white px-3 text-sm font-semibold outline-none focus:border-[#9ab498]"
+            />
+          </div>
+
+          {/* Banco */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold text-[#849083]">
+              <span className="flex items-center gap-1"><CreditCard size={13} /> Banco sugerido</span>
+              <span className="text-[#40562a] font-bold">{money(sugBanco)}</span>
+            </div>
+            <input
+              type="text"
+              value={banco}
+              onChange={e => setBanco(e.target.value)}
+              placeholder="0"
+              className="w-full h-11 rounded-xl border border-[#e2e8df] bg-white px-3 text-sm font-semibold outline-none focus:border-[#9ab498]"
+            />
+          </div>
+
+          {/* Mercado Pago */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-semibold text-[#849083]">
+              <span className="flex items-center gap-1"><Smartphone size={13} /> MercadoPago sugerido</span>
+              <span className="text-[#40562a] font-bold">{money(sugMP)}</span>
+            </div>
+            <input
+              type="text"
+              value={mercadopago}
+              onChange={e => setMercadopago(e.target.value)}
+              placeholder="0"
+              className="w-full h-11 rounded-xl border border-[#e2e8df] bg-white px-3 text-sm font-semibold outline-none focus:border-[#9ab498]"
+            />
+          </div>
+
+          <button
+            onClick={handleCierre}
+            disabled={saving}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#40562a] py-3.5 text-sm font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
+          >
+            {saving ? 'Procesando cierre...' : `Aprobar e Iniciar ${mesSiguienteTexto}`}
+            <ShieldCheck size={16} />
+          </button>
+        </div>
+
+        {/* Mensaje de Éxito */}
+        {success && (
+          <div className="rounded-2xl border border-[#c9ddc5] bg-[#eff8ed] p-4 flex items-center gap-2 text-xs font-semibold text-[#3d6942] animate-in fade-in duration-300">
+            <CheckCircle2 size={16} className="text-[#6a986c]" />
+            Cierre completo. Los saldos de apertura para {mesSiguienteTexto} ya están listos en el Dashboard.
+          </div>
+        )}
+
+        <div className="flex gap-3 rounded-2xl border border-[#e3e9de] bg-white p-4 text-xs text-[#849083]">
+          <ShieldAlert size={19} className="shrink-0 text-[#bda76a]" />
+          <p className="leading-5">
+            Recordá que podés editar los valores propuestos a mano si es que hubo algún movimiento externo no contemplado en el sistema antes de confirmar.
           </p>
-
-          <div className="space-y-2">
-            {/* Caja chica */}
-            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Receipt size={14} className="text-[#6f7f6d]" />
-                <div>
-                  <p className="text-xs font-semibold text-[#3c4e3e]">Caja chica</p>
-                  <p className="text-[10px] text-[#99a398]">
-                    Apertura {money(aperturas.caja_chica)}
-                  </p>
-                </div>
-              </div>
-              <span className="text-sm font-bold">{money(saldos.caja_chica)}</span>
-            </div>
-
-            {/* Cartuchera */}
-            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <LockKeyhole size={14} className="text-[#6f7f6d]" />                <div>
-                  <p className="text-xs font-semibold text-[#3c4e3e]">Cartuchera</p>
-                  <p className="text-[10px] text-[#99a398]">
-                    Apertura {money(aperturas.cartuchera)}
-                  </p>
-                </div>
-              </div>
-              <span className="text-sm font-bold">{money(saldos.cartuchera)}</span>
-            </div>
-
-            {/* Banco */}
-            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Building2 size={14} className="text-[#6f7f6d]" />
-                <div>
-                  <p className="text-xs font-semibold text-[#3c4e3e]">Banco</p>
-                  <p className="text-[10px] text-[#99a398]">
-                    Apertura {money(aperturas.banco)} · Déb + Cred
-                  </p>
-                </div>
-              </div>
-              <span className="text-sm font-bold">{money(saldos.banco)}</span>
-            </div>
-
-            {/* MP */}
-            <div className="flex items-center justify-between rounded-xl border border-[#edf0eb] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Cloud size={14} className="text-[#6f7f6d]" />
-                <div>
-                  <p className="text-xs font-semibold text-[#3c4e3e]">MercadoPago</p>
-                  <p className="text-[10px] text-[#99a398]">
-                    Apertura {money(aperturas.mp)}
-                  </p>
-                </div>
-              </div>
-              <span className="text-sm font-bold">{money(saldos.mp)}</span>
-            </div>
-
-            {/* Total */}
-            <div className="flex items-center justify-between rounded-xl bg-[#40562a] px-4 py-3 text-white">
-              <span className="text-xs font-semibold">Saldo total final</span>
-              <span className="text-lg font-bold">{money(saldoTotal)}</span>
-            </div>
-          </div>
         </div>
 
-        {/* ── ACCIÓN ─────────────────────────────────────────────────── */}
-        <div className="rounded-3xl border border-[#e5eae1] bg-white p-6 shadow-[0_8px_30px_rgba(65,82,55,0.04)]">
-          {yaExiste && !saved && (
-            <div className="mb-4 flex items-center gap-3 rounded-xl border border-[#e8c96e] bg-[#fef9e7] px-4 py-3">
-              <span className="text-xs font-bold text-[#926c00]">
-                ⚠️ Ya existe una apertura cargada para {mesSigNombre}. Podés actualizarla.
-              </span>
-            </div>
-          )}
-
-          {saved ? (
-            <div className="flex items-center gap-2 rounded-xl border border-[#c9ddc5] bg-[#eff8ed] px-4 py-3 text-sm font-semibold text-[#3d6942]">
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#bdd8b8]">
-                ✓
-              </div>
-              Cierre registrado — Apertura de {mesSigNombre} guardada
-            </div>
-          ) : (
-            <button
-              onClick={handleCerrar}
-              disabled={saving}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#40562a] py-3 text-sm font-bold text-white transition hover:bg-[#30431f] disabled:opacity-60"
-            >
-              {saving
-                ? 'Cerrando...'
-                : yaExiste
-                  ? `Actualizar apertura de ${mesSigNombre}`
-                  : `Cerrar ${mesNombre} y abrir ${mesSigNombre}`}
-              <PiggyBank size={16} />
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );
